@@ -6,7 +6,7 @@ from datetime import datetime
 # --- CONFIGURAÇÕES ---
 URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rH7Uz_BhlUMDJJXGrRWg7zuEQUCbRQCGAFbE0Pu9NwI/edit?usp=sharing"
 URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbxKQwvKnNkKCasQNhSOSH44n2Wtxhm6metAPnWGySlDnybBRNFxZ7zHBP4k7wLKDvaq/exec"
-GID_CONFIG = "1701820250" 
+GID_CONFIG = "1701820250"
 
 csv_lanc = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=0')
 csv_cfg = URL_PLANILHA.replace('/edit?usp=sharing', f'/export?format=csv&gid={GID_CONFIG}')
@@ -23,7 +23,8 @@ def carregar_dados_da_nuvem():
         
         cfg = pd.read_csv(csv_cfg)
         s_ini = float(cfg['Saldo Inicial'].iloc[0]) if 'Saldo Inicial' in cfg and not cfg.empty else 0.0
-        d_ini = pd.to_datetime(cfg['Data Inicial'].iloc[0] if 'Data Inicial' in cfg and not cfg.empty else datetime.now()).date()
+        d_ini_str = cfg['Data Inicial'].iloc[0] if 'Data Inicial' in cfg and not cfg.empty else str(datetime.now().date())
+        d_ini = pd.to_datetime(d_ini_str).date()
         
         cats = cfg[['Categoria', 'Sinal']].dropna(subset=['Categoria']).copy()
         if 'Meio_Pagamento' in cfg.columns:
@@ -63,52 +64,48 @@ c1, c2, c3, c4 = st.columns([2, 1, 1.5, 1.5])
 with c3: st.session_state.data_ini = st.date_input("Início", st.session_state.data_ini)
 with c4: st.session_state.saldo_ini = st.number_input("Saldo Inicial", value=float(st.session_state.saldo_ini), format="%.2f")
 
-# --- PROCESSO DE CÁLCULO E TIPAGEM ---
-def gerar_extrato_blindado(lanc, cats, saldo_ini):
-    # 1. Garantir estrutura básica
-    cols_base = ['Data', 'Categoria', 'Meio_Pgto', 'Valor']
-    if lanc.empty:
-        df = pd.DataFrame(columns=cols_base)
-    else:
-        df = lanc[cols_base].copy()
-
-    # 2. Forçar tipos antes do merge para evitar NaN em colunas de texto
-    df['Categoria'] = df['Categoria'].fillna("").astype(str)
-    df['Meio_Pgto'] = df['Meio_Pgto'].fillna("").astype(str)
-    df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
-
-    # 3. Cruzar com categorias para pegar o sinal
-    cats_clean = cats[['Categoria', 'Sinal']].copy()
-    cats_clean['Categoria'] = cats_clean['Categoria'].astype(str)
+# --- CÁLCULO E RECONSTRUÇÃO DE TIPO (A SOLUÇÃO) ---
+def gerar_extrato_reconstruido(lanc, cats, saldo_ini):
+    # 1. Preparar listas de opções limpas
+    valid_cats = [str(x) for x in cats['Categoria'].dropna().unique()]
     
-    df = df.merge(cats_clean, on='Categoria', how='left')
+    # 2. Criar cópia e calcular
+    df = lanc.copy()
+    if df.empty:
+        df = pd.DataFrame(columns=['Data', 'Categoria', 'Meio_Pgto', 'Valor'])
+    
+    df = df.merge(cats[['Categoria', 'Sinal']], on='Categoria', how='left')
     df['Sinal'] = df['Sinal'].fillna('+')
-    df['V_Real'] = df['Valor'] * df['Sinal'].map({'+': 1, '-': -1})
+    df['V_Real'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0) * df['Sinal'].map({'+': 1, '-': -1})
     
-    # 4. Ordenar e Acumular
     df = df.sort_values('Data').reset_index(drop=True)
-    df['Saldo_Acumulado'] = (saldo_ini + df['V_Real'].cumsum()).astype(float)
-    
-    # 5. LIMPEZA FINAL DE TIPOS (A chave para sumir o erro)
-    # Re-garante que as colunas de Selectbox não tenham nada além de string
-    df['Categoria'] = df['Categoria'].astype(str)
-    df['Meio_Pgto'] = df['Meio_Pgto'].astype(str)
-    
-    return df[['Data', 'Categoria', 'Meio_Pgto', 'Valor', 'Saldo_Acumulado']]
+    df['Saldo_Acumulado'] = saldo_ini + df['V_Real'].cumsum()
 
-# Listas de opções (Garantindo que sejam strings)
+    # 3. RECONSTRUÇÃO ATÔMICA: Criamos um novo DF forçando os tipos exatos que o Streamlit quer
+    df_final = pd.DataFrame({
+        'Data': pd.to_datetime(df['Data'], errors='coerce').dt.date,
+        'Categoria': df['Categoria'].fillna("").astype(str),
+        'Meio_Pgto': df['Meio_Pgto'].fillna("").astype(str),
+        'Valor': df['Valor'].fillna(0.0).astype(float),
+        'Saldo_Acumulado': df['Saldo_Acumulado'].fillna(0.0).astype(float)
+    })
+    
+    return df_final
+
+# Garantir que as opções sejam estritamente strings
 lista_cats = [str(x) for x in st.session_state.df_cats['Categoria'].dropna().unique()]
 lista_meios = [str(x) for x in st.session_state.df_meios['Meio_Pagamento'].dropna().unique()]
 
-df_viz = gerar_extrato_blindado(st.session_state.df_lanc, st.session_state.df_cats, st.session_state.saldo_ini)
+df_viz = gerar_extrato_reconstruido(st.session_state.df_lanc, st.session_state.df_cats, st.session_state.saldo_ini)
 
 # --- EDITOR PRINCIPAL ---
+# Removi qualquer configuração que possa causar conflito, deixando o básico funcional
 df_editado = st.data_editor(
     df_viz,
     num_rows="dynamic",
     use_container_width=True,
     column_config={
-        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", required=True),
         "Categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cats, required=True),
         "Meio_Pgto": st.column_config.SelectboxColumn("Meio de Pagamento", options=lista_meios),
         "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
@@ -119,7 +116,7 @@ df_editado = st.data_editor(
 
 # --- SALVAR ---
 if st.button("💾 Salvar e Sincronizar Tudo", use_container_width=True):
-    # Removemos colunas de cálculo antes de enviar
+    # Filtra apenas o que vai para a planilha
     df_envio = df_editado[['Data', 'Categoria', 'Valor', 'Meio_Pgto']].copy()
     df_envio['Data'] = df_envio['Data'].astype(str)
     
@@ -131,12 +128,14 @@ if st.button("💾 Salvar e Sincronizar Tudo", use_container_width=True):
         "data_saldo_inicial": str(st.session_state.data_ini)
     }
     
-    with st.spinner("Sincronizando..."):
+    with st.status("Sincronizando...") as status:
         try:
             res = requests.post(URL_PONTE_SALVAR, json=payload, timeout=20)
             if res.status_code == 200:
                 st.session_state.df_lanc = df_envio
-                st.success("Tudo salvo!")
+                status.update(label="✅ Sincronizado!", state="complete")
                 st.rerun()
-            else: st.error(f"Erro {res.status_code}")
-        except Exception as e: st.error(f"Erro: {e}")
+            else:
+                st.error(f"Erro no Google: {res.status_code}")
+        except Exception as e:
+            st.error(f"Erro: {e}")
