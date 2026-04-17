@@ -4,80 +4,98 @@ import requests
 
 # --- CONFIGURAÇÕES ---
 URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rH7Uz_BhlUMDJJXGrRWg7zuEQUCbRQCGAFbE0Pu9NwI/edit?usp=sharing"
-URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbxmLE4LgLuN1tOxC1sMn55aXTQlJRdjg0MOtGHoZZ3Rx0eXRQSbmSGa3LAHSZdtHg-T/exec"
+URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbwjYRXjx47IlSiqrW3ZxB6GBmKmNROPYdyPS8QxCNMZYnuULuYKkRW4fmrnLNiaLe46/exec"
+GID_CONFIG = "1701820250" # Ex: 123456
 
-# Links para baixar as duas abas
-csv_lancamentos = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=0')
-# Dica: O 'gid' da aba Config você encontra no link do navegador ao clicar nela (ex: gid=12345)
-csv_config = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=COLE_O_ID_DA_ABA_CONFIG')
+csv_lanc = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=0')
+csv_cfg = URL_PLANILHA.replace('/edit?usp=sharing', f'/export?format=csv&gid={GID_CONFIG}')
 
-st.title("💰 Gestor Financeiro Inteligente")
+st.set_page_config(page_title="Financeiro Pro", layout="wide")
 
-# --- LER DADOS ---
-try:
-    df_lanc = pd.read_csv(csv_lancamentos)
-    df_lanc['Data'] = pd.to_datetime(df_lanc['Data'], errors='coerce').dt.date
-    
-    df_cfg = pd.read_csv(csv_config)
-    saldo_ini_valor = float(df_cfg['Saldo Inicial'].iloc[0]) if not df_cfg.empty else 0.0
-    # Pega apenas as colunas de categoria e sinal, removendo linhas vazias
-    df_cats = df_cfg[['Categoria', 'Sinal']].dropna()
-except:
-    df_lanc = pd.DataFrame(columns=['Data', 'Categoria', 'Valor'])
-    saldo_ini_valor = 0.0
-    df_cats = pd.DataFrame({'Categoria': ['Salário', 'Mercado'], 'Sinal': ['+', '-']})
+# --- MEMÓRIA DO APP (SESSION STATE) ---
+if 'df_lanc' not in st.session_state:
+    try:
+        df = pd.read_csv(csv_lanc)
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.date
+        st.session_state.df_lanc = df
+        
+        cfg = pd.read_csv(csv_cfg)
+        st.session_state.saldo_inicial = float(cfg['Saldo Inicial'].iloc[0]) if not cfg.empty else 0.0
+        st.session_state.df_cats = cfg[['Categoria', 'Sinal']].dropna()
+    except:
+        st.session_state.df_lanc = pd.DataFrame(columns=['Data', 'Categoria', 'Valor'])
+        st.session_state.saldo_inicial = 0.0
+        st.session_state.df_cats = pd.DataFrame({'Categoria': ['Salário'], 'Sinal': ['+']})
 
-# --- BARRA LATERAL: CONFIGURAÇÕES ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.header("⚙️ Configurações")
-    saldo_inicial = st.number_input("Saldo Inicial (R$)", value=saldo_ini_valor)
+    st.session_state.saldo_inicial = st.number_input("Saldo Inicial em Conta (R$)", value=st.session_state.saldo_inicial)
     
     st.write("---")
-    st.write("### Gerenciar Categorias")
-    df_cats_editado = st.data_editor(df_cats, num_rows="dynamic", use_container_width=True)
+    st.write("### Categorias e Sinais")
+    # ITEM 3: Sinal inteligente com caixa de seleção (+ ou -)
+    st.session_state.df_cats = st.data_editor(
+        st.session_state.df_cats,
+        num_rows="dynamic",
+        column_config={
+            "Sinal": st.column_config.SelectboxColumn("Operação", options=["+", "-"], required=True)
+        },
+        use_container_width=True
+    )
 
-# --- GRADE VIVA DE LANÇAMENTOS ---
-st.subheader("📝 Extrato de Lançamentos")
+# --- CORPO DO APP ---
+st.title("💰 Extrato Financeiro Vivo")
 
-# Criamos uma cópia para o editor
-df_para_editar = df_lanc.copy()
+# ITEM 2: Lógica para calcular a coluna de Saldo
+def calcular_extrato(df_lanc, df_cats, saldo_ini):
+    if df_lanc.empty:
+        return df_lanc
+    
+    # Unir com as categorias para saber se é + ou -
+    temp_df = df_lanc.merge(df_cats, on='Categoria', how='left')
+    temp_df['Multiplicador'] = temp_df['Sinal'].map({'+': 1, '-': -1}).fillna(1)
+    temp_df['Valor_Real'] = temp_df['Valor'] * temp_df['Multiplicador']
+    
+    # Ordenar por data para o saldo fazer sentido
+    temp_df = temp_df.sort_values('Data')
+    
+    # Cálculo do saldo acumulado
+    temp_df['Saldo_Acumulado'] = saldo_ini + temp_df['Valor_Real'].cumsum()
+    return temp_df[['Data', 'Categoria', 'Valor', 'Saldo_Acumulado']]
 
-# Cálculo do Saldo Acumulado (Lógica de Negócio)
-# 1. Cruzamos os lançamentos com o sinal da categoria
-df_com_sinal = df_para_editar.merge(df_cats_editado, on='Categoria', how='left')
-df_com_sinal['Sinal'] = df_com_sinal['Sinal'].map({'+': 1, '-': -1}).fillna(1)
-df_com_sinal['Valor_Real'] = df_com_sinal['Valor'] * df_com_sinal['Sinal']
+# ITEM 1 e 2: Exibição da Grade Viva com a coluna de Saldo
+st.write("Edite seus lançamentos abaixo. A coluna 'Saldo_Acumulado' é atualizada automaticamente.")
 
-# 2. Calculamos o saldo linha a linha
-df_com_sinal = df_com_sinal.sort_values('Data')
-df_com_sinal['Saldo'] = saldo_inicial + df_com_sinal['Valor_Real'].cumsum()
+# Calculamos o extrato antes de mostrar
+df_visualizacao = calcular_extrato(st.session_state.df_lanc, st.session_state.df_cats, st.session_state.saldo_inicial)
 
-# Exibimos a grade principal (sem mostrar as colunas de cálculo interno)
 df_editado = st.data_editor(
-    df_para_editar,
+    df_visualizacao,
     num_rows="dynamic",
     use_container_width=True,
     column_config={
         "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-        "Categoria": st.column_config.SelectboxColumn("Categoria", options=df_cats_editado['Categoria'].tolist()),
-        "Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")
+        "Categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state.df_cats['Categoria'].tolist()),
+        "Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+        "Saldo_Acumulado": st.column_config.NumberColumn("Saldo Projetado", format="R$ %.2f", disabled=True)
     }
 )
 
-# Exibição do Saldo Final em destaque
-if not df_com_sinal.empty:
-    saldo_final = df_com_sinal['Saldo'].iloc[-1]
-    st.metric("Saldo Final Calculado", f"R$ {saldo_final:,.2f}")
-
-# --- BOTÃO SALVAR TUDO ---
-if st.button("💾 Sincronizar tudo com a Planilha"):
+# Atualiza a memória se houver mudanças na tabela de lançamentos
+if st.button("💾 Salvar e Sincronizar com Planilha"):
+    # Removemos a coluna de saldo acumulado antes de salvar, pois ela é calculada
+    df_para_salvar = df_editado[['Data', 'Categoria', 'Valor']]
+    
     dados_totais = {
-        "lancamentos": df_editado.assign(Data=df_editado['Data'].astype(str)).to_dict(orient='records'),
-        "categorias": df_cats_editado.to_dict(orient='records'),
-        "saldo_inicial": saldo_inicial
+        "lancamentos": df_para_salvar.assign(Data=df_para_salvar['Data'].astype(str)).to_dict(orient='records'),
+        "categorias": st.session_state.df_cats.to_dict(orient='records'),
+        "saldo_inicial": st.session_state.saldo_inicial
     }
-    with st.spinner("Salvando..."):
+    
+    with st.spinner("Sincronizando..."):
         res = requests.post(URL_PONTE_SALVAR, json=dados_totais)
         if res.status_code == 200:
-            st.success("Tudo salvo!")
+            st.session_state.df_lanc = df_para_salvar # Atualiza memória local
+            st.success("Dados protegidos e salvos na nuvem!")
             st.rerun()
