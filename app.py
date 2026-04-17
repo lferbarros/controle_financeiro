@@ -82,20 +82,43 @@ df_editado = st.data_editor(
     }
 )
 
-# Atualiza a memória se houver mudanças na tabela de lançamentos
+# --- BOTÃO SALVAR E SINCRONIZAR ---
 if st.button("💾 Salvar e Sincronizar com Planilha"):
-    # Removemos a coluna de saldo acumulado antes de salvar, pois ela é calculada
-    df_para_salvar = df_editado[['Data', 'Categoria', 'Valor']]
-    
-    dados_totais = {
-        "lancamentos": df_para_salvar.assign(Data=df_para_salvar['Data'].astype(str)).to_dict(orient='records'),
-        "categorias": st.session_state.df_cats.to_dict(orient='records'),
-        "saldo_inicial": st.session_state.saldo_inicial
-    }
-    
-    with st.spinner("Sincronizando..."):
-        res = requests.post(URL_PONTE_SALVAR, json=dados_totais)
-        if res.status_code == 200:
-            st.session_state.df_lanc = df_para_salvar # Atualiza memória local
-            st.success("Dados protegidos e salvos na nuvem!")
-            st.rerun()
+    if df_editado is not None:
+        # 1. Fazemos uma cópia para não mexer no que você está vendo na tela
+        df_para_salvar = df_editado[['Data', 'Categoria', 'Valor']].copy()
+        
+        # 2. LIMPEZA DE SEGURANÇA: Preenche campos vazios para não dar erro no JSON
+        # Se o valor estiver vazio, vira 0.0. Se a data estiver vazia, vira a data de hoje.
+        df_para_salvar['Valor'] = pd.to_numeric(df_para_salvar['Valor']).fillna(0.0)
+        df_para_salvar['Categoria'] = df_para_salvar['Categoria'].fillna("Outros")
+        
+        # Garante que as datas sejam textos válidos
+        df_para_salvar['Data'] = pd.to_datetime(df_para_salvar['Data'], errors='coerce')
+        df_para_salvar['Data'] = df_para_salvar['Data'].fillna(pd.Timestamp.now())
+        df_para_salvar['Data'] = df_para_salvar['Data'].dt.strftime('%Y-%m-%d')
+        
+        # 3. Limpeza na tabela de categorias também
+        df_cats_save = st.session_state.df_cats.copy().dropna(subset=['Categoria'])
+        df_cats_save['Sinal'] = df_cats_save['Sinal'].fillna('+')
+
+        dados_totais = {
+            "lancamentos": df_para_salvar.to_dict(orient='records'),
+            "categorias": df_cats_save.to_dict(orient='records'),
+            "saldo_inicial": float(st.session_state.saldo_inicial)
+        }
+        
+        with st.spinner("Sincronizando com a nuvem..."):
+            try:
+                # O segredo aqui é o timeout e garantir que o dado é serializável
+                res = requests.post(URL_PONTE_SALVAR, json=dados_totais, timeout=15)
+                
+                if res.status_code == 200:
+                    # Atualizamos a memória do app com os dados limpos
+                    st.session_state.df_lanc = df_para_salvar
+                    st.success("Tudo salvo e sincronizado!")
+                    st.rerun()
+                else:
+                    st.error(f"O Google respondeu com erro: {res.status_code}")
+            except Exception as e:
+                st.error(f"Erro de conexão: Verifique se o link do Apps Script está correto. Detalhe: {e}")
