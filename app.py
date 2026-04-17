@@ -4,80 +4,80 @@ import requests
 
 # --- CONFIGURAÇÕES ---
 URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rH7Uz_BhlUMDJJXGrRWg7zuEQUCbRQCGAFbE0Pu9NwI/edit?usp=sharing"
-URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbyML1R0f1goSCMTcltnWxxShr450SMmEQGcejXnMMLBjMLABHjRoShaiXwt-66UGYno/exec"
+URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbxmLE4LgLuN1tOxC1sMn55aXTQlJRdjg0MOtGHoZZ3Rx0eXRQSbmSGa3LAHSZdtHg-T/exec"
 
-csv_url = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv')
+# Links para baixar as duas abas
+csv_lancamentos = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=0')
+# Dica: O 'gid' da aba Config você encontra no link do navegador ao clicar nela (ex: gid=12345)
+csv_config = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=COLE_O_ID_DA_ABA_CONFIG')
 
-st.title("📝 Grade Financeira Viva")
+st.title("💰 Gestor Financeiro Inteligente")
 
-# --- LER E TRATAR DADOS ---
+# --- LER DADOS ---
 try:
-    # Lemos o CSV
-    df_original = pd.read_csv(csv_url)
+    df_lanc = pd.read_csv(csv_lancamentos)
+    df_lanc['Data'] = pd.to_datetime(df_lanc['Data'], errors='coerce').dt.date
     
-    # CORREÇÃO CRUCIAL: Converter a coluna Data para o formato de data do Python
-    # Se a coluna estiver vazia ou não existir, o 'errors=coerce' evita que o app quebre
-    if 'Data' in df_original.columns:
-        df_original['Data'] = pd.to_datetime(df_original['Data'], errors='coerce').dt.date
-    else:
-        df_original['Data'] = pd.to_datetime([]).date
-        
-    # Garantir que a coluna Valor seja numérica
-    if 'Valor' in df_original.columns:
-        df_original['Valor'] = pd.to_numeric(df_original['Valor'], errors='coerce').fillna(0.0)
+    df_cfg = pd.read_csv(csv_config)
+    saldo_ini_valor = float(df_cfg['Saldo Inicial'].iloc[0]) if not df_cfg.empty else 0.0
+    # Pega apenas as colunas de categoria e sinal, removendo linhas vazias
+    df_cats = df_cfg[['Categoria', 'Sinal']].dropna()
+except:
+    df_lanc = pd.DataFrame(columns=['Data', 'Categoria', 'Valor'])
+    saldo_ini_valor = 0.0
+    df_cats = pd.DataFrame({'Categoria': ['Salário', 'Mercado'], 'Sinal': ['+', '-']})
 
-except Exception as e:
-    # Se a planilha estiver totalmente vazia, criamos um modelo padrão
-    df_original = pd.DataFrame(columns=['Data', 'Categoria', 'Valor'])
+# --- BARRA LATERAL: CONFIGURAÇÕES ---
+with st.sidebar:
+    st.header("⚙️ Configurações")
+    saldo_inicial = st.number_input("Saldo Inicial (R$)", value=saldo_ini_valor)
+    
+    st.write("---")
+    st.write("### Gerenciar Categorias")
+    df_cats_editado = st.data_editor(df_cats, num_rows="dynamic", use_container_width=True)
 
-# --- GRADE EDITÁVEL ---
-st.info("Clique no '+' no final da tabela para adicionar ou selecione uma linha para deletar.")
+# --- GRADE VIVA DE LANÇAMENTOS ---
+st.subheader("📝 Extrato de Lançamentos")
 
+# Criamos uma cópia para o editor
+df_para_editar = df_lanc.copy()
+
+# Cálculo do Saldo Acumulado (Lógica de Negócio)
+# 1. Cruzamos os lançamentos com o sinal da categoria
+df_com_sinal = df_para_editar.merge(df_cats_editado, on='Categoria', how='left')
+df_com_sinal['Sinal'] = df_com_sinal['Sinal'].map({'+': 1, '-': -1}).fillna(1)
+df_com_sinal['Valor_Real'] = df_com_sinal['Valor'] * df_com_sinal['Sinal']
+
+# 2. Calculamos o saldo linha a linha
+df_com_sinal = df_com_sinal.sort_values('Data')
+df_com_sinal['Saldo'] = saldo_inicial + df_com_sinal['Valor_Real'].cumsum()
+
+# Exibimos a grade principal (sem mostrar as colunas de cálculo interno)
 df_editado = st.data_editor(
-    df_original,
+    df_para_editar,
     num_rows="dynamic",
     use_container_width=True,
     column_config={
-        "Data": st.column_config.DateColumn(
-            "Data", 
-            format="DD/MM/YYYY", 
-            required=True
-        ),
-        "Categoria": st.column_config.SelectboxColumn(
-            "Categoria", 
-            options=["Salário", "Venda", "Mercado", "Lazer", "Aluguel", "Combustível", "Outros"],
-            required=True
-        ),
-        "Valor": st.column_config.NumberColumn(
-            "Valor (R$)", 
-            format="R$ %.2f",
-            required=True
-        )
+        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+        "Categoria": st.column_config.SelectboxColumn("Categoria", options=df_cats_editado['Categoria'].tolist()),
+        "Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")
     }
 )
 
-# --- BOTÃO PARA SALVAR ---
-if st.button("💾 Salvar Alterações"):
-    if df_editado is not None:
-        # Preparar para o envio: converter datas para texto (string)
-        df_para_enviar = df_editado.copy()
-        df_para_enviar['Data'] = df_para_enviar['Data'].astype(str)
-        
-        lista_dados = df_para_enviar.to_dict(orient='records')
-        
-        with st.spinner("Sincronizando..."):
-            try:
-                res = requests.post(URL_PONTE_SALVAR, json=lista_dados, timeout=10)
-                if res.status_code == 200:
-                    st.success("Tabela sincronizada!")
-                    st.rerun()
-                else:
-                    st.error(f"Erro no servidor: {res.status_code}")
-            except Exception as e:
-                st.error(f"Erro de conexão: {e}")
+# Exibição do Saldo Final em destaque
+if not df_com_sinal.empty:
+    saldo_final = df_com_sinal['Saldo'].iloc[-1]
+    st.metric("Saldo Final Calculado", f"R$ {saldo_final:,.2f}")
 
-# --- RESUMO ---
-if not df_editado.empty:
-    saldo = df_editado['Valor'].sum()
-    cor = "blue" if saldo >= 0 else "red"
-    st.markdown(f"### Saldo Atual: <span style='color:{cor}'>R$ {saldo:,.2f}</span>", unsafe_allow_html=True)
+# --- BOTÃO SALVAR TUDO ---
+if st.button("💾 Sincronizar tudo com a Planilha"):
+    dados_totais = {
+        "lancamentos": df_editado.assign(Data=df_editado['Data'].astype(str)).to_dict(orient='records'),
+        "categorias": df_cats_editado.to_dict(orient='records'),
+        "saldo_inicial": saldo_inicial
+    }
+    with st.spinner("Salvando..."):
+        res = requests.post(URL_PONTE_SALVAR, json=dados_totais)
+        if res.status_code == 200:
+            st.success("Tudo salvo!")
+            st.rerun()
