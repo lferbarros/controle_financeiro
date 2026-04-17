@@ -61,9 +61,19 @@ with st.sidebar:
 st.title("💰 Extrato Financeiro")
 
 c1, c2, c3, c4 = st.columns([2, 1, 1.5, 1.5])
-with c3: st.session_state.data_ini = st.date_input("Início", st.session_state.data_ini)
-with c4: st.session_state.saldo_ini = st.number_input("Saldo Inicial", value=float(st.session_state.saldo_ini), format="%.2f")
-
+with c3: 
+    # Adicionado o parâmetro format="DD/MM/YYYY"
+    st.session_state.data_ini = st.date_input(
+        "Início", 
+        st.session_state.data_ini, 
+        format="DD/MM/YYYY"
+    )
+with c4: 
+    st.session_state.saldo_ini = st.number_input(
+        "Saldo Inicial", 
+        value=float(st.session_state.saldo_ini), 
+        format="%.2f"
+    )
 # --- CÁLCULO E RECONSTRUÇÃO DE TIPO (A SOLUÇÃO) ---
 def gerar_extrato_reconstruido(lanc, cats, saldo_ini):
     # 1. Preparar listas de opções limpas
