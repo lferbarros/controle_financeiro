@@ -1,48 +1,56 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
-# 1. Cole aqui o link da planilha que você copiou no Passo 1
 URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rH7Uz_BhlUMDJJXGrRWg7zuEQUCbRQCGAFbE0Pu9NwI/edit?usp=sharing"
-# 2. Cole aqui o URL do Apps Script que você copiou no Passo 2
-URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbzclG8Nsa_1FmCDn_4MJHIBHEbI4VmiSatKc2DTPbsvW2dr_81K7Sb_D09qh7_gwW5z/exec"
+URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbyML1R0f1goSCMTcltnWxxShr450SMmEQGcejXnMMLBjMLABHjRoShaiXwt-66UGYno/exec"
 
-# Transforma o link da planilha em um link de download de dados
 csv_url = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv')
 
-st.title("💰 Meu Financeiro Mobile")
+st.title("📝 Grade Financeira Viva")
+st.info("Dica: Clique duas vezes em uma célula para editar. Use a tecla 'Delete' ou o ícone de lixo para excluir.")
 
 # --- LER DADOS ---
 try:
-    df = pd.read_csv(csv_url)
-    df['Data'] = pd.to_datetime(df['Data'])
+    # O comando 'header=0' garante que ele entenda a primeira linha como título
+    df_original = pd.read_csv(csv_url)
 except:
-    df = pd.DataFrame(columns=['Data', 'Categoria', 'Valor'])
+    df_original = pd.DataFrame(columns=['Data', 'Categoria', 'Valor'])
 
-# --- FORMULÁRIO ---
-with st.form("novo_lancamento", clear_on_submit=True):
-    st.write("### Novo Lançamento")
-    data = st.date_input("Data", datetime.now()).strftime('%Y-%m-%d')
-    cat = st.selectbox("Categoria", ["Salário", "Mercado", "Lazer", "Aluguel", "Outros"])
-    valor = st.number_input("Valor (R$)", min_value=0.0, step=1.0)
-    tipo = st.radio("Tipo", ["Receita (+)", "Despesa (-)"], horizontal=True)
+# --- GRADE EDITÁVEL (O CORAÇÃO DO APP) ---
+# Aqui criamos a "grade viva"
+df_editado = st.data_editor(
+    df_original,
+    num_rows="dynamic", # Permite adicionar e deletar linhas
+    use_container_width=True,
+    column_config={
+        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+        "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Salário", "Mercado", "Lazer", "Aluguel", "Outros"]),
+        "Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")
+    }
+)
+
+# --- BOTÃO PARA SALVAR ALTERAÇÕES ---
+if st.button("💾 Salvar todas as alterações na Planilha"):
+    # Convertemos a tabela editada para um formato que o Google Sheets entende (JSON)
+    # Primeiro, formatamos a data para texto para não dar erro no envio
+    df_para_enviar = df_editado.copy()
+    df_para_enviar['Data'] = df_para_enviar['Data'].astype(str)
     
-    if st.form_submit_button("Salvar"):
-        valor_final = valor if "Receita" in tipo else -valor
-        # Envia para a "ponte" que salva na planilha
-        dados = {"data": data, "categoria": cat, "valor": valor_final}
-        res = requests.post(URL_PONTE_SALVAR, json=dados)
+    lista_dados = df_para_enviar.to_dict(orient='records')
+    
+    with st.spinner("Sincronizando com o Google Sheets..."):
+        res = requests.post(URL_PONTE_SALVAR, json=lista_dados)
         
         if res.status_code == 200:
-            st.success("Salvo com sucesso! Atualize a página.")
+            st.success("Planilha atualizada com sucesso!")
+            # Pequeno truque para recarregar a página e mostrar os dados salvos
+            st.rerun()
         else:
-            st.error("Erro ao salvar.")
+            st.error("Erro ao salvar. Verifique a conexão.")
 
-# --- EXIBIR ---
-st.write("---")
-st.write("### Extrato")
-if not df.empty:
-    st.dataframe(df.sort_values(by='Data', ascending=False), use_container_width=True)
-    st.metric("Saldo Atual", f"R$ {df['Valor'].sum():.2f}")
+# --- RESUMO FINANCEIRO ---
+if not df_editado.empty:
+    saldo = df_editado['Valor'].sum()
+    st.metric("Saldo Total Acumulado", f"R$ {saldo:,.2f}")
