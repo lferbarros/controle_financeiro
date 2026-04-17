@@ -5,7 +5,7 @@ import requests
 # --- CONFIGURAÇÕES ---
 URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rH7Uz_BhlUMDJJXGrRWg7zuEQUCbRQCGAFbE0Pu9NwI/edit?usp=sharing"
 URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbwjYRXjx47IlSiqrW3ZxB6GBmKmNROPYdyPS8QxCNMZYnuULuYKkRW4fmrnLNiaLe46/exec"
-GID_CONFIG = "1701820250" # Ex: 123456
+GID_CONFIG = "1701820250" 
 
 csv_lanc = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=0')
 csv_cfg = URL_PLANILHA.replace('/edit?usp=sharing', f'/export?format=csv&gid={GID_CONFIG}')
@@ -16,7 +16,9 @@ st.set_page_config(page_title="Financeiro Pro", layout="wide")
 if 'df_lanc' not in st.session_state:
     try:
         df = pd.read_csv(csv_lanc)
+        # Força conversão inicial
         df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.date
+        df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
         st.session_state.df_lanc = df
         
         cfg = pd.read_csv(csv_cfg)
@@ -30,95 +32,100 @@ if 'df_lanc' not in st.session_state:
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.header("⚙️ Configurações")
-    st.session_state.saldo_inicial = st.number_input("Saldo Inicial em Conta (R$)", value=st.session_state.saldo_inicial)
+    st.session_state.saldo_inicial = st.number_input("Saldo Inicial em Conta (R$)", value=float(st.session_state.saldo_inicial))
     
     st.write("---")
     st.write("### Categorias e Sinais")
-    # ITEM 3: Sinal inteligente com caixa de seleção (+ ou -)
+    # Editando categorias sem perder os lançamentos
     st.session_state.df_cats = st.data_editor(
         st.session_state.df_cats,
         num_rows="dynamic",
         column_config={
             "Sinal": st.column_config.SelectboxColumn("Operação", options=["+", "-"], required=True)
         },
-        use_container_width=True
+        use_container_width=True,
+        key="editor_categorias"
     )
 
 # --- CORPO DO APP ---
 st.title("💰 Extrato Financeiro Vivo")
 
-# ITEM 2: Lógica para calcular a coluna de Saldo
-def calcular_extrato(df_lanc, df_cats, saldo_ini):
+def calcular_extrato_blindado(df_lanc, df_cats, saldo_ini):
+    # Se não houver dados, cria estrutura vazia com as colunas certas
     if df_lanc.empty:
-        return df_lanc
+        df_vazia = pd.DataFrame(columns=['Data', 'Categoria', 'Valor', 'Saldo_Acumulado'])
+        df_vazia['Data'] = pd.to_datetime([]).date
+        return df_vazia
+
+    # Limpeza pré-merge
+    df_lanc = df_lanc.copy()
+    df_lanc['Valor'] = pd.to_numeric(df_lanc['Valor'], errors='coerce').fillna(0.0)
     
-    # Unir com as categorias para saber se é + ou -
+    # Merge para pegar o sinal (+ ou -)
     temp_df = df_lanc.merge(df_cats, on='Categoria', how='left')
-    temp_df['Multiplicador'] = temp_df['Sinal'].map({'+': 1, '-': -1}).fillna(1)
-    temp_df['Valor_Real'] = temp_df['Valor'] * temp_df['Multiplicador']
+    temp_df['Sinal'] = temp_df['Sinal'].fillna('+')
     
-    # Ordenar por data para o saldo fazer sentido
+    # Cálculo do valor real
+    temp_df['Mult'] = temp_df['Sinal'].map({'+': 1, '-': -1})
+    temp_df['Valor_Real'] = temp_df['Valor'] * temp_df['Mult']
+    
+    # Ordenar e calcular saldo acumulado
     temp_df = temp_df.sort_values('Data')
-    
-    # Cálculo do saldo acumulado
     temp_df['Saldo_Acumulado'] = saldo_ini + temp_df['Valor_Real'].cumsum()
-    return temp_df[['Data', 'Categoria', 'Valor', 'Saldo_Acumulado']]
+    
+    # SELEÇÃO E FORÇAR TIPOS (Isso resolve o erro de compatibilidade)
+    final_df = temp_df[['Data', 'Categoria', 'Valor', 'Saldo_Acumulado']].copy()
+    
+    # Forçar tipos finais explicitamente
+    final_df['Data'] = pd.to_datetime(final_df['Data'], errors='coerce').dt.date
+    final_df['Categoria'] = final_df['Categoria'].astype(str)
+    final_df['Valor'] = final_df['Valor'].astype(float)
+    final_df['Saldo_Acumulado'] = final_df['Saldo_Acumulado'].astype(float)
+    
+    return final_df
 
-# ITEM 1 e 2: Exibição da Grade Viva com a coluna de Saldo
-st.write("Edite seus lançamentos abaixo. A coluna 'Saldo_Acumulado' é atualizada automaticamente.")
+# Prepara a tabela para o editor
+df_para_mostrar = calcular_extrato_blindado(
+    st.session_state.df_lanc, 
+    st.session_state.df_cats, 
+    st.session_state.saldo_inicial
+)
 
-# Calculamos o extrato antes de mostrar
-df_visualizacao = calcular_extrato(st.session_state.df_lanc, st.session_state.df_cats, st.session_state.saldo_inicial)
-
-df_editado = st.data_editor(
-    df_visualizacao,
+# GRADE VIVA
+st.info("A coluna 'Saldo Projetado' é calculada automaticamente com base nas categorias da lateral.")
+df_resultado = st.data_editor(
+    df_para_mostrar,
     num_rows="dynamic",
     use_container_width=True,
     column_config={
-        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-        "Categoria": st.column_config.SelectboxColumn("Categoria", options=st.session_state.df_cats['Categoria'].tolist()),
-        "Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", required=True),
+        "Categoria": st.column_config.SelectboxColumn(
+            "Categoria", 
+            options=st.session_state.df_cats['Categoria'].dropna().unique().tolist(),
+            required=True
+        ),
+        "Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f", min_value=0.0),
         "Saldo_Acumulado": st.column_config.NumberColumn("Saldo Projetado", format="R$ %.2f", disabled=True)
-    }
+    },
+    key="editor_principal"
 )
 
-# --- BOTÃO SALVAR E SINCRONIZAR ---
-if st.button("💾 Salvar e Sincronizar com Planilha"):
-    if df_editado is not None:
-        # 1. Fazemos uma cópia para não mexer no que você está vendo na tela
-        df_para_salvar = df_editado[['Data', 'Categoria', 'Valor']].copy()
+# Botão Salvar
+if st.button("💾 Sincronizar Tudo"):
+    # Limpa antes de salvar (remove a coluna de saldo acumulado que é só visual)
+    if df_resultado is not None:
+        df_save = df_resultado[['Data', 'Categoria', 'Valor']].copy()
+        df_save['Data'] = df_save['Data'].astype(str)
         
-        # 2. LIMPEZA DE SEGURANÇA: Preenche campos vazios para não dar erro no JSON
-        # Se o valor estiver vazio, vira 0.0. Se a data estiver vazia, vira a data de hoje.
-        df_para_salvar['Valor'] = pd.to_numeric(df_para_salvar['Valor']).fillna(0.0)
-        df_para_salvar['Categoria'] = df_para_salvar['Categoria'].fillna("Outros")
-        
-        # Garante que as datas sejam textos válidos
-        df_para_salvar['Data'] = pd.to_datetime(df_para_salvar['Data'], errors='coerce')
-        df_para_salvar['Data'] = df_para_salvar['Data'].fillna(pd.Timestamp.now())
-        df_para_salvar['Data'] = df_para_salvar['Data'].dt.strftime('%Y-%m-%d')
-        
-        # 3. Limpeza na tabela de categorias também
-        df_cats_save = st.session_state.df_cats.copy().dropna(subset=['Categoria'])
-        df_cats_save['Sinal'] = df_cats_save['Sinal'].fillna('+')
-
-        dados_totais = {
-            "lancamentos": df_para_salvar.to_dict(orient='records'),
-            "categorias": df_cats_save.to_dict(orient='records'),
+        dados_envio = {
+            "lancamentos": df_save.to_dict(orient='records'),
+            "categorias": st.session_state.df_cats.to_dict(orient='records'),
             "saldo_inicial": float(st.session_state.saldo_inicial)
         }
         
-        with st.spinner("Sincronizando com a nuvem..."):
-            try:
-                # O segredo aqui é o timeout e garantir que o dado é serializável
-                res = requests.post(URL_PONTE_SALVAR, json=dados_totais, timeout=15)
-                
-                if res.status_code == 200:
-                    # Atualizamos a memória do app com os dados limpos
-                    st.session_state.df_lanc = df_para_salvar
-                    st.success("Tudo salvo e sincronizado!")
-                    st.rerun()
-                else:
-                    st.error(f"O Google respondeu com erro: {res.status_code}")
-            except Exception as e:
-                st.error(f"Erro de conexão: Verifique se o link do Apps Script está correto. Detalhe: {e}")
+        with st.spinner("Enviando..."):
+            res = requests.post(URL_PONTE_SALVAR, json=dados_envio)
+            if res.status_code == 200:
+                st.session_state.df_lanc = df_resultado[['Data', 'Categoria', 'Valor']]
+                st.success("Salvo com sucesso!")
+                st.rerun()
