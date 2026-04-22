@@ -10,8 +10,6 @@ st.set_page_config(page_title="Gestão Financeira Operacional", layout="wide")
 # ==========================================
 # 1. SEGURANÇA E CONFIGURAÇÃO (SECRETS)
 # ==========================================
-# Se estiver no Streamlit Cloud, ele lerá de 'Advanced Settings > Secrets'
-# Se estiver local, você pode digitar na barra lateral ou criar um arquivo .streamlit/secrets.toml
 if "URL_SCRIPT" in st.secrets:
     url_planilha = st.secrets["URL_SCRIPT"]
 else:
@@ -23,9 +21,9 @@ else:
 if 'categorias' not in st.session_state:
     st.session_state.categorias = pd.DataFrame(columns=["Categoria", "Tipo"])
 if 'cartoes' not in st.session_state:
-    st.session_state.cartoes = pd.DataFrame(columns=["Cartão", "Vencimento", "Fechamento", "Valor Atual"])
+    st.session_state.cartoes = pd.DataFrame(columns=["Cartão", "Vencimento", "Fechamento"])
 if 'lancamentos' not in st.session_state:
-    st.session_state.lancamentos = pd.DataFrame(columns=["Data", "Categoria", "Cartão", "Tipo", "Valor", "Data Efetiva"])
+    st.session_state.lancamentos = pd.DataFrame(columns=["Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva"])
 
 # ==========================================
 # 3. LÓGICA DE DATAS E SALDO
@@ -41,19 +39,16 @@ def calcular_data_efetiva(data_compra, nome_cartao):
     dia_fechamento = int(cartao_info.iloc[0]["Fechamento"])
     dia_vencimento = int(cartao_info.iloc[0]["Vencimento"])
     
-    # Data de fechamento no mês da compra
     data_fechamento_mes = datetime.date(data_compra.year, data_compra.month, dia_fechamento)
     
-    # Se a compra foi feita após o fechamento, vai para o mês seguinte
     if data_compra > data_fechamento_mes:
         base_vencimento = data_compra + relativedelta(months=1)
     else:
         base_vencimento = data_compra
     
-    # Ajusta para o dia do vencimento
     try:
         data_venc = datetime.date(base_vencimento.year, base_vencimento.month, dia_vencimento)
-    except ValueError: # Caso o dia 31 não exista no mês
+    except ValueError:
         data_venc = datetime.date(base_vencimento.year, base_vencimento.month, 28)
         
     return data_venc
@@ -61,14 +56,13 @@ def calcular_data_efetiva(data_compra, nome_cartao):
 def processar_exibicao():
     if not st.session_state.lancamentos.empty:
         df = st.session_state.lancamentos.copy()
-        df["Data Efetiva"] = pd.to_datetime(df["Data Efetiva"]).dt.date
-        df = df.sort_values(by="Data Efetiva").reset_index(drop=True)
+        df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"]).dt.date
+        df = df.sort_values(by="Data_Efetiva").reset_index(drop=True)
         
-        # Cálculo do saldo acumulado
         sinais = df['Tipo'].apply(lambda x: 1 if x == '+' else -1)
-        df['Valor Numérico'] = pd.to_numeric(df['Valor']) * sinais
-        df['Saldo Acumulado'] = df['Valor Numérico'].cumsum()
-        return df.drop(columns=['Valor Numérico'])
+        df['Valor_Num'] = pd.to_numeric(df['Valor']) * sinais
+        df['Saldo Acumulado'] = df['Valor_Num'].cumsum()
+        return df.drop(columns=['Valor_Num'])
     return st.session_state.lancamentos
 
 # ==========================================
@@ -77,19 +71,15 @@ def processar_exibicao():
 with st.sidebar:
     st.header("⚙️ Cadastros Base")
     
-    # Categorias
     with st.expander("Categorias"):
         with st.form("form_cat", clear_on_submit=True):
             n_cat = st.text_input("Nova Categoria")
             t_cat = st.selectbox("Sinal", ["-", "+"])
             if st.form_submit_button("Salvar"):
                 if n_cat:
-                    st.session_state.categorias = pd.concat([
-                        st.session_state.categorias, 
-                        pd.DataFrame([{"Categoria": n_cat, "Tipo": t_cat}])
-                    ], ignore_index=True)
+                    nova_cat = pd.DataFrame([{"Categoria": n_cat, "Tipo": t_cat}])
+                    st.session_state.categorias = pd.concat([st.session_state.categorias, nova_cat], ignore_index=True)
 
-    # Cartões
     with st.expander("Cartões de Crédito"):
         with st.form("form_cartao", clear_on_submit=True):
             n_cartao = st.text_input("Nome do Cartão")
@@ -97,10 +87,8 @@ with st.sidebar:
             fech = st.number_input("Dia Fechamento", 1, 31, 3)
             if st.form_submit_button("Cadastrar"):
                 if n_cartao:
-                    st.session_state.cartoes = pd.concat([
-                        st.session_state.cartoes, 
-                        pd.DataFrame([{"Cartão": n_cartao, "Vencimento": venc, "Fechamento": fech}])
-                    ], ignore_index=True)
+                    novo_c = pd.DataFrame([{"Cartão": n_cartao, "Vencimento": venc, "Fechamento": fech}])
+                    st.session_state.cartoes = pd.concat([st.session_state.cartoes, novo_c], ignore_index=True)
 
 # ==========================================
 # 5. PAINEL PRINCIPAL - LANÇAMENTOS
@@ -112,7 +100,7 @@ with st.container(border=True):
     c1, c2, c3, c4 = st.columns(4)
     
     with c1:
-        d_lanc = st.date_input("Data do Gasto/Receita")
+        d_lanc = st.date_input("Data da Ocorrência")
     with c2:
         lista_c = st.session_state.categorias["Categoria"].tolist()
         cat_sel = st.selectbox("Categoria", lista_c if lista_c else ["Defina uma categoria"])
@@ -128,28 +116,33 @@ with st.container(border=True):
             data_efetiva = calcular_data_efetiva(d_lanc, cart_sel)
             
             novo = pd.DataFrame([{
-                "Data": d_lanc, "Categoria": cat_sel, "Cartão": cart_sel,
-                "Tipo": tipo, "Valor": valor, "Data Efetiva": data_efetiva
+                "Data": d_lanc, 
+                "Categoria": cat_sel, 
+                "Cartao": cart_sel,
+                "Tipo": tipo, 
+                "Valor": valor, 
+                "Data_Efetiva": data_efetiva
             }])
             
             st.session_state.lancamentos = pd.concat([st.session_state.lancamentos, novo], ignore_index=True)
-            # Sincronização com Google Sheets (Versão Padronizada)
-if url_planilha:
-    try:
-        # Criamos um dicionário com nomes padronizados para o Sheets
-        payload = {
-            "Data": d_lanc.isoformat(),
-            "Categoria": cat_sel,
-            "Cartao": cart_sel,
-            "Tipo": tipo,
-            "Valor": valor,
-            "Data_Efetiva": data_efetiva.isoformat(), # Nome padronizado
-            "action": "insert"
-        }
-        requests.post(url_planilha, json=payload, timeout=5)
-        st.success("Sincronizado com a planilha!")
-    except Exception as e:
-        st.warning(f"Erro na sincronização: {e}")
+            
+            if url_planilha:
+                try:
+                    payload = {
+                        "Data": d_lanc.isoformat(),
+                        "Categoria": cat_sel,
+                        "Cartao": cart_sel,
+                        "Tipo": tipo,
+                        "Valor": valor,
+                        "Data_Efetiva": data_efetiva.isoformat(),
+                        "action": "insert"
+                    }
+                    requests.post(url_planilha, json=payload, timeout=5)
+                    st.success("Sincronizado com a planilha!")
+                except:
+                    st.warning("Erro de conexão com o Google Sheets.")
+            
+            # A linha abaixo deve estar exatamente neste nível de indentação
             st.rerun()
 
 st.divider()
@@ -164,17 +157,16 @@ if not df_final.empty:
     df_editado = st.data_editor(
         df_final,
         column_config={
-    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-    "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
-    "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY") # Nome Visível padronizado
-},
+            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+            "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
+            "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY")
+        },
         disabled=["Saldo Acumulado"],
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True
     )
     
-    # Sincroniza exclusões feitas manualmente na tabela
     if len(df_editado) != len(st.session_state.lancamentos):
         st.session_state.lancamentos = df_editado.drop(columns=["Saldo Acumulado"], errors="ignore")
 else:
