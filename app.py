@@ -15,19 +15,19 @@ if "URL_SCRIPT" in st.secrets:
 else:
     url_planilha = st.sidebar.text_input("URL do App Script (Google Sheets)", type="password")
 
-@st.cache_data(show_spinner="Carregando base de dados...")
-def carregar_dados_iniciais(url):
+@st.cache_data(show_spinner="Sincronizando com Google Sheets...")
+def carregar_tudo_da_nuvem(url):
     if not url: return None
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=15)
         return response.json()
     except:
         return None
 
 # ==========================================
-# 2. GERENCIAMENTO DE ESTADO
+# 2. INICIALIZAÇÃO DO ESTADO (PERSISTÊNCIA)
 # ==========================================
-dados_nuvem = carregar_dados_iniciais(url_planilha)
+dados_nuvem = carregar_tudo_da_nuvem(url_planilha)
 
 if 'categorias' not in st.session_state:
     if dados_nuvem and dados_nuvem.get('categorias'):
@@ -42,7 +42,10 @@ if 'cartoes' not in st.session_state:
         st.session_state.cartoes = pd.DataFrame(columns=["Cartão", "Vencimento", "Fechamento"])
 
 if 'lancamentos' not in st.session_state:
-    st.session_state.lancamentos = pd.DataFrame(columns=["ID", "Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva"])
+    if dados_nuvem and dados_nuvem.get('lancamentos'):
+        st.session_state.lancamentos = pd.DataFrame(dados_nuvem['lancamentos'])
+    else:
+        st.session_state.lancamentos = pd.DataFrame(columns=["ID", "Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva"])
 
 # ==========================================
 # 3. LÓGICA DE NEGÓCIO
@@ -68,12 +71,14 @@ def processar_exibicao():
         df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"]).dt.date
         df = df.sort_values(by="Data_Efetiva").reset_index(drop=True)
         sinais = df['Tipo'].apply(lambda x: 1 if x == '+' else -1)
-        df['Saldo Acumulado'] = (pd.to_numeric(df['Valor']) * sinais).cumsum()
+        # Garante que Valor seja numérico para o cálculo do saldo
+        df['Valor'] = pd.to_numeric(df['Valor'])
+        df['Saldo Acumulado'] = (df['Valor'] * sinais).cumsum()
         return df
     return st.session_state.lancamentos
 
 # ==========================================
-# 4. BARRA LATERAL (CADASTROS PERSISTENTES)
+# 4. BARRA LATERAL (CADASTROS)
 # ==========================================
 with st.sidebar:
     st.header("⚙️ Cadastros Base")
@@ -84,8 +89,8 @@ with st.sidebar:
             if st.form_submit_button("Salvar Categoria"):
                 if n_cat and url_planilha:
                     requests.post(url_planilha, json={"action": "add_categoria", "Categoria": n_cat, "Tipo": t_cat})
-                    st.session_state.categorias = pd.concat([st.session_state.categorias, pd.DataFrame([{"Categoria": n_cat, "Tipo": t_cat}])], ignore_index=True)
-                    st.cache_data.clear()
+                    st.cache_data.clear() # Força recarregar da nuvem no próximo boot
+                    st.success("Categoria salva!")
                     st.rerun()
 
     with st.expander("Cartões de Crédito"):
@@ -96,12 +101,12 @@ with st.sidebar:
             if st.form_submit_button("Cadastrar Cartão"):
                 if n_cartao and url_planilha:
                     requests.post(url_planilha, json={"action": "add_cartao", "Cartao": n_cartao, "Vencimento": venc, "Fechamento": fech})
-                    st.session_state.cartoes = pd.concat([st.session_state.cartoes, pd.DataFrame([{"Cartão": n_cartao, "Vencimento": venc, "Fechamento": fech}])], ignore_index=True)
                     st.cache_data.clear()
+                    st.success("Cartão salvo!")
                     st.rerun()
 
 # ==========================================
-# 5. LANÇAMENTOS
+# 5. PAINEL DE LANÇAMENTOS
 # ==========================================
 st.title("🏦 Fluxo de Caixa Operacional")
 with st.container(border=True):
@@ -121,11 +126,15 @@ with st.container(border=True):
             tipo = st.session_state.categorias.loc[st.session_state.categorias["Categoria"] == cat_sel, "Tipo"].values[0]
             data_efetiva = calcular_data_efetiva(d_lanc, cart_sel)
             id_lanc = str(uuid.uuid4())
-            novo = pd.DataFrame([{"ID": id_lanc, "Data": d_lanc, "Categoria": cat_sel, "Cartao": cart_sel, "Tipo": tipo, "Valor": valor, "Data_Efetiva": data_efetiva}])
-            st.session_state.lancamentos = pd.concat([st.session_state.lancamentos, novo], ignore_index=True)
+            
             if url_planilha:
-                requests.post(url_planilha, json={"action": "insert", "ID": id_lanc, "Data": d_lanc.isoformat(), "Categoria": cat_sel, "Cartao": cart_sel, "Tipo": tipo, "Valor": valor, "Data_Efetiva": data_efetiva.isoformat()})
-            st.rerun()
+                requests.post(url_planilha, json={
+                    "action": "insert", "ID": id_lanc, "Data": d_lanc.isoformat(), 
+                    "Categoria": cat_sel, "Cartao": cart_sel, "Tipo": tipo, 
+                    "Valor": valor, "Data_Efetiva": data_efetiva.isoformat()
+                })
+                st.cache_data.clear()
+                st.rerun()
 
 st.divider()
 
@@ -143,7 +152,8 @@ if not df_final.empty:
     df_editado = st.data_editor(
         styled_df,
         column_config={
-            "ID": None, "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+            "ID": None, 
+            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
             "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
             "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
             "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY")
@@ -154,8 +164,9 @@ if not df_final.empty:
     
     if len(df_editado) < len(st.session_state.lancamentos):
         id_del = list(set(st.session_state.lancamentos["ID"]) - set(df_editado["ID"]))[0]
-        if url_planilha: requests.post(url_planilha, json={"action": "delete", "ID": id_del})
-        st.session_state.lancamentos = df_editado.drop(columns=["Saldo Acumulado"], errors="ignore")
-        st.rerun()
+        if url_planilha: 
+            requests.post(url_planilha, json={"action": "delete", "ID": id_del})
+            st.cache_data.clear()
+            st.rerun()
 else:
-    st.info("Aguardando lançamentos.")
+    st.info("Nenhum lançamento encontrado na planilha.")
