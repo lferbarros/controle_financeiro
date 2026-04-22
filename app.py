@@ -24,7 +24,6 @@ if 'categorias' not in st.session_state:
 if 'cartoes' not in st.session_state:
     st.session_state.cartoes = pd.DataFrame(columns=["Cartão", "Vencimento", "Fechamento"])
 if 'lancamentos' not in st.session_state:
-    # Adicionado o campo ID invisível
     st.session_state.lancamentos = pd.DataFrame(columns=["ID", "Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva"])
 
 # ==========================================
@@ -58,6 +57,8 @@ def calcular_data_efetiva(data_compra, nome_cartao):
 def processar_exibicao():
     if not st.session_state.lancamentos.empty:
         df = st.session_state.lancamentos.copy()
+        # Tratamento para garantir que ambas as colunas sejam reconhecidas como data
+        df["Data"] = pd.to_datetime(df["Data"]).dt.date
         df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"]).dt.date
         df = df.sort_values(by="Data_Efetiva").reset_index(drop=True)
         
@@ -107,18 +108,17 @@ with st.container(border=True):
         lista_c = st.session_state.categorias["Categoria"].tolist()
         cat_sel = st.selectbox("Categoria", lista_c if lista_c else ["Defina uma categoria"])
     with c3:
-        # Alterado para "Não" conforme solicitado
         lista_cart = ["Não"] + st.session_state.cartoes["Cartão"].tolist()
         cart_sel = st.selectbox("Cartão de Crédito", lista_cart)
     with c4:
-        valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+        # Removido os botões de incremento (step=None) e atualizado o rótulo
+        valor = st.number_input("Valor", min_value=0.0, format="%.2f", step=None)
 
     if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
         if not st.session_state.categorias.empty and cat_sel != "Defina uma categoria":
             tipo = st.session_state.categorias.loc[st.session_state.categorias["Categoria"] == cat_sel, "Tipo"].values[0]
             data_efetiva = calcular_data_efetiva(d_lanc, cart_sel)
             
-            # Geração do ID Único
             id_lancamento = str(uuid.uuid4())
             
             novo = pd.DataFrame([{
@@ -155,32 +155,38 @@ with st.container(border=True):
 st.divider()
 
 # ==========================================
-# 6. TABELA DINÂMICA
+# 6. TABELA DINÂMICA COM FORMATAÇÃO
 # ==========================================
 st.subheader("Projeção de Saldo Bancário")
 df_final = processar_exibicao()
 
+def colorir_saldo_negativo(row):
+    # Aplica um fundo vermelho transparente se o saldo for menor que zero
+    cor = 'background-color: rgba(255, 75, 75, 0.2)' if row['Saldo Acumulado'] < 0 else ''
+    return [cor] * len(row)
+
 if not df_final.empty:
-    # A tabela agora está fechada para edição, exceto para deleção de linhas
     colunas_para_desabilitar = ["Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva", "Saldo Acumulado"]
     
+    # Aplica a formatação condicional à tabela
+    styled_df = df_final.style.apply(colorir_saldo_negativo, axis=1)
+    
     df_editado = st.data_editor(
-        df_final,
+        styled_df,
         column_config={
-            "ID": None, # Oculta a coluna de ID do usuário
+            "ID": None, 
+            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"), # Formatação padronizada
             "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
             "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
             "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY")
         },
         disabled=colunas_para_desabilitar, 
-        num_rows="dynamic", # Permite que a linha seja deletada
+        num_rows="dynamic", 
         use_container_width=True,
         hide_index=True
     )
     
-    # Lógica de sincronização da Exclusão
     if len(df_editado) < len(st.session_state.lancamentos):
-        # Identifica qual ID sumiu da tabela
         ids_atuais = set(df_editado["ID"])
         ids_antigos = set(st.session_state.lancamentos["ID"])
         ids_deletados = ids_antigos - ids_atuais
@@ -188,18 +194,15 @@ if not df_final.empty:
         if url_planilha and ids_deletados:
             for id_del in ids_deletados:
                 try:
-                    # Envia comando de exclusão para o Sheets
                     requests.post(url_planilha, json={"action": "delete", "ID": id_del}, timeout=5)
                     st.toast("Excluído da planilha com sucesso!")
                 except:
                     st.toast("Erro ao excluir da planilha.")
                     
-        # Atualiza o estado interno do app
         st.session_state.lancamentos = df_editado.drop(columns=["Saldo Acumulado"], errors="ignore")
         st.rerun()
         
     elif len(df_editado) > len(st.session_state.lancamentos):
-        # Impede que o usuário crie uma linha em branco pela tabela (já que as colunas estão fechadas)
         st.warning("Utilize o formulário acima para inserir novos registros.")
         st.rerun()
 
