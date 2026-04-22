@@ -25,7 +25,7 @@ def carregar_tudo_da_nuvem(url):
         return None
 
 # ==========================================
-# 2. INICIALIZAÇÃO DO ESTADO (PERSISTÊNCIA)
+# 2. INICIALIZAÇÃO DO ESTADO
 # ==========================================
 dados_nuvem = carregar_tudo_da_nuvem(url_planilha)
 
@@ -70,15 +70,20 @@ def processar_exibicao():
         df["Data"] = pd.to_datetime(df["Data"]).dt.date
         df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"]).dt.date
         df = df.sort_values(by="Data_Efetiva").reset_index(drop=True)
-        sinais = df['Tipo'].apply(lambda x: 1 if x == '+' else -1)
-        # Garante que Valor seja numérico para o cálculo do saldo
-        df['Valor'] = pd.to_numeric(df['Valor'])
+        
+        # Lógica robusta para tratar o sinal e evitar erros de fórmula do Sheets
+        def converter_sinal(x):
+            s = str(x).strip()
+            return 1 if "+" in s else -1
+            
+        sinais = df['Tipo'].apply(converter_sinal)
+        df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0)
         df['Saldo Acumulado'] = (df['Valor'] * sinais).cumsum()
         return df
     return st.session_state.lancamentos
 
 # ==========================================
-# 4. BARRA LATERAL (CADASTROS)
+# 4. BARRA LATERAL
 # ==========================================
 with st.sidebar:
     st.header("⚙️ Cadastros Base")
@@ -88,8 +93,10 @@ with st.sidebar:
             t_cat = st.selectbox("Sinal", ["-", "+"])
             if st.form_submit_button("Salvar Categoria"):
                 if n_cat and url_planilha:
-                    requests.post(url_planilha, json={"action": "add_categoria", "Categoria": n_cat, "Tipo": t_cat})
-                    st.cache_data.clear() # Força recarregar da nuvem no próximo boot
+                    # Enviamos com a aspa simples para o Sheets não achar que é fórmula
+                    sinal_blindado = "'" + t_cat
+                    requests.post(url_planilha, json={"action": "add_categoria", "Categoria": n_cat, "Tipo": sinal_blindado})
+                    st.cache_data.clear()
                     st.success("Categoria salva!")
                     st.rerun()
 
@@ -119,7 +126,9 @@ with st.container(border=True):
     with c3:
         lista_cart = ["Não"] + st.session_state.cartoes["Cartão"].tolist()
         cart_sel = st.selectbox("Cartão de Crédito", lista_cart)
-    with c4: valor = st.number_input("Valor", min_value=0.0, format="%.2f", step=None)
+    with c4: 
+        # Campo de valor limpo, sem botões de + e -
+        valor = st.number_input("Valor", min_value=0.0, format="%.2f", step=None)
 
     if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
         if not st.session_state.categorias.empty and cat_sel != "Defina uma categoria":
@@ -128,9 +137,11 @@ with st.container(border=True):
             id_lanc = str(uuid.uuid4())
             
             if url_planilha:
+                # Blindagem do sinal também no lançamento
+                sinal_envio = "'" + str(tipo).replace("'", "")
                 requests.post(url_planilha, json={
                     "action": "insert", "ID": id_lanc, "Data": d_lanc.isoformat(), 
-                    "Categoria": cat_sel, "Cartao": cart_sel, "Tipo": tipo, 
+                    "Categoria": cat_sel, "Cartao": cart_sel, "Tipo": sinal_envio, 
                     "Valor": valor, "Data_Efetiva": data_efetiva.isoformat()
                 })
                 st.cache_data.clear()
@@ -156,14 +167,19 @@ if not df_final.empty:
             "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
             "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
             "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
-            "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY")
+            "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY"),
+            "Tipo": st.column_config.TextColumn("Sinal")
         },
         disabled=["Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva", "Saldo Acumulado"], 
         num_rows="dynamic", use_container_width=True, hide_index=True
     )
     
     if len(df_editado) < len(st.session_state.lancamentos):
-        id_del = list(set(st.session_state.lancamentos["ID"]) - set(df_editado["ID"]))[0]
+        # Identificação robusta para deleção
+        ids_atuais = set(df_editado["ID"])
+        ids_antigos = set(st.session_state.lancamentos["ID"])
+        id_del = list(ids_antigos - ids_atuais)[0]
+        
         if url_planilha: 
             requests.post(url_planilha, json={"action": "delete", "ID": id_del})
             st.cache_data.clear()
