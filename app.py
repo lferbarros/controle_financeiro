@@ -1,151 +1,176 @@
 import streamlit as st
 import pandas as pd
+import datetime
+from dateutil.relativedelta import relativedelta
 import requests
-from datetime import datetime
 
-# --- CONFIGURAÇÕES ---
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rH7Uz_BhlUMDJJXGrRWg7zuEQUCbRQCGAFbE0Pu9NwI/edit?usp=sharing"
-URL_PONTE_SALVAR = "https://script.google.com/macros/s/AKfycbxKQwvKnNkKCasQNhSOSH44n2Wtxhm6metAPnWGySlDnybBRNFxZ7zHBP4k7wLKDvaq/exec"
-GID_CONFIG = "1701820250"
+# Configuração da Página
+st.set_page_config(page_title="Gestão Financeira Operacional", layout="wide")
 
-csv_lanc = URL_PLANILHA.replace('/edit?usp=sharing', '/export?format=csv&gid=0')
-csv_cfg = URL_PLANILHA.replace('/edit?usp=sharing', f'/export?format=csv&gid={GID_CONFIG}')
+# ==========================================
+# 1. SEGURANÇA E CONFIGURAÇÃO (SECRETS)
+# ==========================================
+# Se estiver no Streamlit Cloud, ele lerá de 'Advanced Settings > Secrets'
+# Se estiver local, você pode digitar na barra lateral ou criar um arquivo .streamlit/secrets.toml
+if "URL_SCRIPT" in st.secrets:
+    url_planilha = st.secrets["URL_SCRIPT"]
+else:
+    url_planilha = st.sidebar.text_input("URL do App Script (Google Sheets)", type="password")
 
-st.set_page_config(page_title="Controle Financeiro", layout="wide")
+# ==========================================
+# 2. GERENCIAMENTO DE ESTADO
+# ==========================================
+if 'categorias' not in st.session_state:
+    st.session_state.categorias = pd.DataFrame(columns=["Categoria", "Tipo"])
+if 'cartoes' not in st.session_state:
+    st.session_state.cartoes = pd.DataFrame(columns=["Cartão", "Vencimento", "Fechamento", "Valor Atual"])
+if 'lancamentos' not in st.session_state:
+    st.session_state.lancamentos = pd.DataFrame(columns=["Data", "Categoria", "Cartão", "Tipo", "Valor", "Data Efetiva"])
 
-# --- CARGA DE DADOS ---
-def carregar_dados_da_nuvem():
-    try:
-        df_l = pd.read_csv(csv_lanc)
-        df_l['Data'] = pd.to_datetime(df_l['Data'], errors='coerce').dt.date
-        df_l['Valor'] = pd.to_numeric(df_l['Valor'], errors='coerce').fillna(0.0).astype(float)
-        if 'Meio_Pgto' not in df_l.columns: df_l['Meio_Pgto'] = ""
+# ==========================================
+# 3. LÓGICA DE DATAS E SALDO
+# ==========================================
+def calcular_data_efetiva(data_compra, nome_cartao):
+    if nome_cartao == "Nenhum" or not nome_cartao:
+        return data_compra
+    
+    cartao_info = st.session_state.cartoes[st.session_state.cartoes["Cartão"] == nome_cartao]
+    if cartao_info.empty:
+        return data_compra
         
-        cfg = pd.read_csv(csv_cfg)
-        s_ini = float(cfg['Saldo Inicial'].iloc[0]) if 'Saldo Inicial' in cfg and not cfg.empty else 0.0
-        d_ini_str = cfg['Data Inicial'].iloc[0] if 'Data Inicial' in cfg and not cfg.empty else str(datetime.now().date())
-        d_ini = pd.to_datetime(d_ini_str).date()
-        
-        cats = cfg[['Categoria', 'Sinal']].dropna(subset=['Categoria']).copy()
-        if 'Meio_Pagamento' in cfg.columns:
-            meios = cfg[['Meio_Pagamento']].dropna().copy()
-        else:
-            meios = pd.DataFrame({'Meio_Pagamento': ["Pix", "Cartão de Crédito", "Débito em Conta"]})
-            
-        return df_l, s_ini, d_ini, cats, meios
-    except:
-        return None
-
-if 'dados_carregados' not in st.session_state:
-    res = carregar_dados_da_nuvem()
-    if res:
-        st.session_state.df_lanc, st.session_state.saldo_ini, \
-        st.session_state.data_ini, st.session_state.df_cats, st.session_state.df_meios = res
+    dia_fechamento = int(cartao_info.iloc[0]["Fechamento"])
+    dia_vencimento = int(cartao_info.iloc[0]["Vencimento"])
+    
+    # Data de fechamento no mês da compra
+    data_fechamento_mes = datetime.date(data_compra.year, data_compra.month, dia_fechamento)
+    
+    # Se a compra foi feita após o fechamento, vai para o mês seguinte
+    if data_compra > data_fechamento_mes:
+        base_vencimento = data_compra + relativedelta(months=1)
     else:
-        st.session_state.df_lanc = pd.DataFrame(columns=['Data', 'Categoria', 'Valor', 'Meio_Pgto'])
-        st.session_state.df_cats = pd.DataFrame({'Categoria': ['Receita', 'Despesa'], 'Sinal': ['+', '-']})
-        st.session_state.df_meios = pd.DataFrame({'Meio_Pagamento': ["Pix", "Cartão de Crédito", "Débito em Conta"]})
-        st.session_state.saldo_ini, st.session_state.data_ini = 0.0, datetime.now().date()
-    st.session_state.dados_carregados = True
+        base_vencimento = data_compra
+    
+    # Ajusta para o dia do vencimento
+    try:
+        data_venc = datetime.date(base_vencimento.year, base_vencimento.month, dia_vencimento)
+    except ValueError: # Caso o dia 31 não exista no mês
+        data_venc = datetime.date(base_vencimento.year, base_vencimento.month, 28)
+        
+    return data_venc
 
-# --- SIDEBAR ---
+def processar_exibicao():
+    if not st.session_state.lancamentos.empty:
+        df = st.session_state.lancamentos.copy()
+        df["Data Efetiva"] = pd.to_datetime(df["Data Efetiva"]).dt.date
+        df = df.sort_values(by="Data Efetiva").reset_index(drop=True)
+        
+        # Cálculo do saldo acumulado
+        sinais = df['Tipo'].apply(lambda x: 1 if x == '+' else -1)
+        df['Valor Numérico'] = pd.to_numeric(df['Valor']) * sinais
+        df['Saldo Acumulado'] = df['Valor Numérico'].cumsum()
+        return df.drop(columns=['Valor Numérico'])
+    return st.session_state.lancamentos
+
+# ==========================================
+# 4. INTERFACE - BARRA LATERAL
+# ==========================================
 with st.sidebar:
-    st.header("⚙️ Configurações")
-    st.session_state.df_cats = st.data_editor(st.session_state.df_cats[['Categoria', 'Sinal']], num_rows="dynamic", key="ed_cats")
-    st.session_state.df_meios = st.data_editor(st.session_state.df_meios[['Meio_Pagamento']], num_rows="dynamic", key="ed_meios")
-    if st.button("🔄 Recarregar Dados"):
-        st.session_state.pop('dados_carregados')
-        st.rerun()
+    st.header("⚙️ Cadastros Base")
+    
+    # Categorias
+    with st.expander("Categorias"):
+        with st.form("form_cat", clear_on_submit=True):
+            n_cat = st.text_input("Nova Categoria")
+            t_cat = st.selectbox("Sinal", ["-", "+"])
+            if st.form_submit_button("Salvar"):
+                if n_cat:
+                    st.session_state.categorias = pd.concat([
+                        st.session_state.categorias, 
+                        pd.DataFrame([{"Categoria": n_cat, "Tipo": t_cat}])
+                    ], ignore_index=True)
 
-# --- CORPO PRINCIPAL ---
-st.title("💰 Extrato Financeiro")
+    # Cartões
+    with st.expander("Cartões de Crédito"):
+        with st.form("form_cartao", clear_on_submit=True):
+            n_cartao = st.text_input("Nome do Cartão")
+            venc = st.number_input("Dia Vencimento", 1, 31, 10)
+            fech = st.number_input("Dia Fechamento", 1, 31, 3)
+            if st.form_submit_button("Cadastrar"):
+                if n_cartao:
+                    st.session_state.cartoes = pd.concat([
+                        st.session_state.cartoes, 
+                        pd.DataFrame([{"Cartão": n_cartao, "Vencimento": venc, "Fechamento": fech}])
+                    ], ignore_index=True)
 
-c1, c2, c3, c4 = st.columns([2, 1, 1.5, 1.5])
-with c3: 
-    # Adicionado o parâmetro format="DD/MM/YYYY"
-    st.session_state.data_ini = st.date_input(
-        "Início", 
-        st.session_state.data_ini, 
-        format="DD/MM/YYYY"
+# ==========================================
+# 5. PAINEL PRINCIPAL - LANÇAMENTOS
+# ==========================================
+st.title("🏦 Fluxo de Caixa Operacional")
+
+with st.container(border=True):
+    st.subheader("Novo Lançamento")
+    c1, c2, c3, c4 = st.columns(4)
+    
+    with c1:
+        d_lanc = st.date_input("Data do Gasto/Receita")
+    with c2:
+        lista_c = st.session_state.categorias["Categoria"].tolist()
+        cat_sel = st.selectbox("Categoria", lista_c if lista_c else ["Defina uma categoria"])
+    with c3:
+        lista_cart = ["Nenhum"] + st.session_state.cartoes["Cartão"].tolist()
+        cart_sel = st.selectbox("Meio de Pagamento", lista_cart)
+    with c4:
+        valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+
+    if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
+        if not st.session_state.categorias.empty and cat_sel != "Defina uma categoria":
+            tipo = st.session_state.categorias.loc[st.session_state.categorias["Categoria"] == cat_sel, "Tipo"].values[0]
+            data_efetiva = calcular_data_efetiva(d_lanc, cart_sel)
+            
+            novo = pd.DataFrame([{
+                "Data": d_lanc, "Categoria": cat_sel, "Cartão": cart_sel,
+                "Tipo": tipo, "Valor": valor, "Data Efetiva": data_efetiva
+            }])
+            
+            st.session_state.lancamentos = pd.concat([st.session_state.lancamentos, novo], ignore_index=True)
+            
+            # Sincronização com Google Sheets
+            if url_planilha:
+                try:
+                    payload = novo.to_dict(orient="records")[0]
+                    payload["Data"] = payload["Data"].isoformat()
+                    payload["Data Efetiva"] = payload["Data Efetiva"].isoformat()
+                    payload["action"] = "insert"
+                    requests.post(url_planilha, json=payload, timeout=5)
+                    st.success("Sincronizado com a planilha!")
+                except:
+                    st.warning("Salvo localmente, mas houve erro na conexão com a planilha.")
+            st.rerun()
+
+st.divider()
+
+# ==========================================
+# 6. TABELA DINÂMICA
+# ==========================================
+st.subheader("Projeção de Saldo Bancário")
+df_final = processar_exibicao()
+
+if not df_final.empty:
+    df_editado = st.data_editor(
+        df_final,
+        column_config={
+            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+            "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
+            "Data Efetiva": st.column_config.DateColumn("Data de Saída/Entrada", format="DD/MM/YYYY")
+        },
+        disabled=["Saldo Acumulado"],
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True
     )
-with c4: 
-    st.session_state.saldo_ini = st.number_input(
-        "Saldo Inicial", 
-        value=float(st.session_state.saldo_ini), 
-        format="%.2f"
-    )
-# --- CÁLCULO E RECONSTRUÇÃO DE TIPO (A SOLUÇÃO) ---
-def gerar_extrato_reconstruido(lanc, cats, saldo_ini):
-    # 1. Preparar listas de opções limpas
-    valid_cats = [str(x) for x in cats['Categoria'].dropna().unique()]
     
-    # 2. Criar cópia e calcular
-    df = lanc.copy()
-    if df.empty:
-        df = pd.DataFrame(columns=['Data', 'Categoria', 'Meio_Pgto', 'Valor'])
-    
-    df = df.merge(cats[['Categoria', 'Sinal']], on='Categoria', how='left')
-    df['Sinal'] = df['Sinal'].fillna('+')
-    df['V_Real'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0) * df['Sinal'].map({'+': 1, '-': -1})
-    
-    df = df.sort_values('Data').reset_index(drop=True)
-    df['Saldo_Acumulado'] = saldo_ini + df['V_Real'].cumsum()
-
-    # 3. RECONSTRUÇÃO ATÔMICA: Criamos um novo DF forçando os tipos exatos que o Streamlit quer
-    df_final = pd.DataFrame({
-        'Data': pd.to_datetime(df['Data'], errors='coerce').dt.date,
-        'Categoria': df['Categoria'].fillna("").astype(str),
-        'Meio_Pgto': df['Meio_Pgto'].fillna("").astype(str),
-        'Valor': df['Valor'].fillna(0.0).astype(float),
-        'Saldo_Acumulado': df['Saldo_Acumulado'].fillna(0.0).astype(float)
-    })
-    
-    return df_final
-
-# Garantir que as opções sejam estritamente strings
-lista_cats = [str(x) for x in st.session_state.df_cats['Categoria'].dropna().unique()]
-lista_meios = [str(x) for x in st.session_state.df_meios['Meio_Pagamento'].dropna().unique()]
-
-df_viz = gerar_extrato_reconstruido(st.session_state.df_lanc, st.session_state.df_cats, st.session_state.saldo_ini)
-
-# --- EDITOR PRINCIPAL ---
-# Removi qualquer configuração que possa causar conflito, deixando o básico funcional
-df_editado = st.data_editor(
-    df_viz,
-    num_rows="dynamic",
-    use_container_width=True,
-    column_config={
-        "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", required=True),
-        "Categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cats, required=True),
-        "Meio_Pgto": st.column_config.SelectboxColumn("Meio de Pagamento", options=lista_meios),
-        "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-        "Saldo_Acumulado": st.column_config.NumberColumn("Saldo Projetado", format="R$ %.2f", disabled=True)
-    },
-    key="editor_main"
-)
-
-# --- SALVAR ---
-if st.button("💾 Salvar e Sincronizar Tudo", use_container_width=True):
-    # Filtra apenas o que vai para a planilha
-    df_envio = df_editado[['Data', 'Categoria', 'Valor', 'Meio_Pgto']].copy()
-    df_envio['Data'] = df_envio['Data'].astype(str)
-    
-    payload = {
-        "lancamentos": df_envio.to_dict(orient='records'),
-        "categorias": st.session_state.df_cats.to_dict(orient='records'),
-        "meios_pgto": st.session_state.df_meios.to_dict(orient='records'),
-        "saldo_inicial": float(st.session_state.saldo_ini),
-        "data_saldo_inicial": str(st.session_state.data_ini)
-    }
-    
-    with st.status("Sincronizando...") as status:
-        try:
-            res = requests.post(URL_PONTE_SALVAR, json=payload, timeout=20)
-            if res.status_code == 200:
-                st.session_state.df_lanc = df_envio
-                status.update(label="✅ Sincronizado!", state="complete")
-                st.rerun()
-            else:
-                st.error(f"Erro no Google: {res.status_code}")
-        except Exception as e:
-            st.error(f"Erro: {e}")
+    # Sincroniza exclusões feitas manualmente na tabela
+    if len(df_editado) != len(st.session_state.lancamentos):
+        st.session_state.lancamentos = df_editado.drop(columns=["Saldo Acumulado"], errors="ignore")
+else:
+    st.info("Aguardando lançamentos para projetar o fluxo de caixa.")
