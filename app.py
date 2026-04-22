@@ -46,15 +46,31 @@ def calcular_vencimento(data_c, nome_c):
     except: return datetime.date(base.year, base.month, 28)
 
 def obter_df_exibicao():
-    if st.session_state.lancamentos.empty: return st.session_state.lancamentos
+    if st.session_state.lancamentos.empty: 
+        return st.session_state.lancamentos
+    
     df = st.session_state.lancamentos.copy()
-    # Garantir formatos para ordenação e cálculo
-    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"]).dt.date
+    
+    # --- TRATAMENTO ROBUSTO DE DATAS ---
+    # errors='coerce' transforma lixo/erros em NaT (Not a Time)
+    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce')
+    
+    # Remove linhas onde a data é inválida (limpa o lixo vindo da planilha)
+    df = df.dropna(subset=["Data_Efetiva"])
+    
+    # Agora sim convertemos para apenas data (sem horas)
+    df["Data_Efetiva"] = df["Data_Efetiva"].dt.date
+    
+    # --- TRATAMENTO DE VALORES ---
     df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
+    
+    # Ordenação
     df = df.sort_values(by="Data_Efetiva").reset_index(drop=True)
     
+    # Cálculo de Saldo
     sinais = df['Tipo'].apply(lambda x: 1 if "+" in str(x) else -1)
     df['Saldo Acumulado'] = (df['Valor'] * sinais).cumsum()
+    
     return df
 
 # --- SIDEBAR (CADASTROS) ---
