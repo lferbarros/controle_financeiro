@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import uuid
 from dateutil.relativedelta import relativedelta
 import requests
 
@@ -8,7 +9,7 @@ import requests
 st.set_page_config(page_title="Gestão Financeira Operacional", layout="wide")
 
 # ==========================================
-# 1. SEGURANÇA E CONFIGURAÇÃO (SECRETS)
+# 1. SEGURANÇA E CONFIGURAÇÃO
 # ==========================================
 if "URL_SCRIPT" in st.secrets:
     url_planilha = st.secrets["URL_SCRIPT"]
@@ -23,13 +24,14 @@ if 'categorias' not in st.session_state:
 if 'cartoes' not in st.session_state:
     st.session_state.cartoes = pd.DataFrame(columns=["Cartão", "Vencimento", "Fechamento"])
 if 'lancamentos' not in st.session_state:
-    st.session_state.lancamentos = pd.DataFrame(columns=["Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva"])
+    # Adicionado o campo ID invisível
+    st.session_state.lancamentos = pd.DataFrame(columns=["ID", "Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva"])
 
 # ==========================================
 # 3. LÓGICA DE DATAS E SALDO
 # ==========================================
 def calcular_data_efetiva(data_compra, nome_cartao):
-    if nome_cartao == "Nenhum" or not nome_cartao:
+    if nome_cartao == "Não" or not nome_cartao:
         return data_compra
     
     cartao_info = st.session_state.cartoes[st.session_state.cartoes["Cartão"] == nome_cartao]
@@ -105,8 +107,9 @@ with st.container(border=True):
         lista_c = st.session_state.categorias["Categoria"].tolist()
         cat_sel = st.selectbox("Categoria", lista_c if lista_c else ["Defina uma categoria"])
     with c3:
-        lista_cart = ["Nenhum"] + st.session_state.cartoes["Cartão"].tolist()
-        cart_sel = st.selectbox("Meio de Pagamento", lista_cart)
+        # Alterado para "Não" conforme solicitado
+        lista_cart = ["Não"] + st.session_state.cartoes["Cartão"].tolist()
+        cart_sel = st.selectbox("Cartão de Crédito", lista_cart)
     with c4:
         valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
 
@@ -115,7 +118,11 @@ with st.container(border=True):
             tipo = st.session_state.categorias.loc[st.session_state.categorias["Categoria"] == cat_sel, "Tipo"].values[0]
             data_efetiva = calcular_data_efetiva(d_lanc, cart_sel)
             
+            # Geração do ID Único
+            id_lancamento = str(uuid.uuid4())
+            
             novo = pd.DataFrame([{
+                "ID": id_lancamento,
                 "Data": d_lanc, 
                 "Categoria": cat_sel, 
                 "Cartao": cart_sel,
@@ -129,20 +136,20 @@ with st.container(border=True):
             if url_planilha:
                 try:
                     payload = {
+                        "action": "insert",
+                        "ID": id_lancamento,
                         "Data": d_lanc.isoformat(),
                         "Categoria": cat_sel,
                         "Cartao": cart_sel,
                         "Tipo": tipo,
                         "Valor": valor,
-                        "Data_Efetiva": data_efetiva.isoformat(),
-                        "action": "insert"
+                        "Data_Efetiva": data_efetiva.isoformat()
                     }
                     requests.post(url_planilha, json=payload, timeout=5)
                     st.success("Sincronizado com a planilha!")
                 except:
                     st.warning("Erro de conexão com o Google Sheets.")
             
-            # A linha abaixo deve estar exatamente neste nível de indentação
             st.rerun()
 
 st.divider()
@@ -154,20 +161,47 @@ st.subheader("Projeção de Saldo Bancário")
 df_final = processar_exibicao()
 
 if not df_final.empty:
+    # A tabela agora está fechada para edição, exceto para deleção de linhas
+    colunas_para_desabilitar = ["Data", "Categoria", "Cartao", "Tipo", "Valor", "Data_Efetiva", "Saldo Acumulado"]
+    
     df_editado = st.data_editor(
         df_final,
         column_config={
+            "ID": None, # Oculta a coluna de ID do usuário
             "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
             "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
             "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY")
         },
-        disabled=["Saldo Acumulado"],
-        num_rows="dynamic",
+        disabled=colunas_para_desabilitar, 
+        num_rows="dynamic", # Permite que a linha seja deletada
         use_container_width=True,
         hide_index=True
     )
     
-    if len(df_editado) != len(st.session_state.lancamentos):
+    # Lógica de sincronização da Exclusão
+    if len(df_editado) < len(st.session_state.lancamentos):
+        # Identifica qual ID sumiu da tabela
+        ids_atuais = set(df_editado["ID"])
+        ids_antigos = set(st.session_state.lancamentos["ID"])
+        ids_deletados = ids_antigos - ids_atuais
+        
+        if url_planilha and ids_deletados:
+            for id_del in ids_deletados:
+                try:
+                    # Envia comando de exclusão para o Sheets
+                    requests.post(url_planilha, json={"action": "delete", "ID": id_del}, timeout=5)
+                    st.toast("Excluído da planilha com sucesso!")
+                except:
+                    st.toast("Erro ao excluir da planilha.")
+                    
+        # Atualiza o estado interno do app
         st.session_state.lancamentos = df_editado.drop(columns=["Saldo Acumulado"], errors="ignore")
+        st.rerun()
+        
+    elif len(df_editado) > len(st.session_state.lancamentos):
+        # Impede que o usuário crie uma linha em branco pela tabela (já que as colunas estão fechadas)
+        st.warning("Utilize o formulário acima para inserir novos registros.")
+        st.rerun()
+
 else:
     st.info("Aguardando lançamentos para projetar o fluxo de caixa.")
