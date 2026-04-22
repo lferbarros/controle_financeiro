@@ -133,18 +133,23 @@ with st.container(border=True):
             }])
             
             st.session_state.lancamentos = pd.concat([st.session_state.lancamentos, novo], ignore_index=True)
-            
-            # Sincronização com Google Sheets
-            if url_planilha:
-                try:
-                    payload = novo.to_dict(orient="records")[0]
-                    payload["Data"] = payload["Data"].isoformat()
-                    payload["Data Efetiva"] = payload["Data Efetiva"].isoformat()
-                    payload["action"] = "insert"
-                    requests.post(url_planilha, json=payload, timeout=5)
-                    st.success("Sincronizado com a planilha!")
-                except:
-                    st.warning("Salvo localmente, mas houve erro na conexão com a planilha.")
+            # Sincronização com Google Sheets (Versão Padronizada)
+if url_planilha:
+    try:
+        # Criamos um dicionário com nomes padronizados para o Sheets
+        payload = {
+            "Data": d_lanc.isoformat(),
+            "Categoria": cat_sel,
+            "Cartao": cart_sel,
+            "Tipo": tipo,
+            "Valor": valor,
+            "Data_Efetiva": data_efetiva.isoformat(), # Nome padronizado
+            "action": "insert"
+        }
+        requests.post(url_planilha, json=payload, timeout=5)
+        st.success("Sincronizado com a planilha!")
+    except Exception as e:
+        st.warning(f"Erro na sincronização: {e}")
             st.rerun()
 
 st.divider()
@@ -159,10 +164,10 @@ if not df_final.empty:
     df_editado = st.data_editor(
         df_final,
         column_config={
-            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-            "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
-            "Data Efetiva": st.column_config.DateColumn("Data de Saída/Entrada", format="DD/MM/YYYY")
-        },
+    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+    "Saldo Acumulado": st.column_config.NumberColumn("Saldo Previsto", format="R$ %.2f"),
+    "Data_Efetiva": st.column_config.DateColumn("Data Efetiva", format="DD/MM/YYYY") # Nome Visível padronizado
+},
         disabled=["Saldo Acumulado"],
         num_rows="dynamic",
         use_container_width=True,
