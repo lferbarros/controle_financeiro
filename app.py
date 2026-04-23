@@ -104,7 +104,7 @@ def calcular_vencimento(data_o, cartao_n):
 # 4. SIDEBAR (TABELAS VIVAS COM BLINDAGEM)
 # =========================================================
 with st.sidebar:
-    st.title("⚙️ Configurações")
+    st.title("Configurações")
     if st.button("Sair / Trocar Base"): logout()
     st.divider()
 
@@ -228,7 +228,7 @@ if not df_vis.empty:
     def style_negative(row):
         return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
 
-    st.subheader("Fluxo $ Projetado")
+    st.subheader("Fluxo Projetado")
     lan_edit = st.data_editor(
         df_vis.style.apply(style_negative, axis=1),
         column_config={
