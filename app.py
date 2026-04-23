@@ -189,11 +189,18 @@ with st.expander("➕ Novo Lançamento", expanded=True):
             d_e = calcular_vencimento(d_o, card_sel)
             uid = str(uuid.uuid4())
             payload = {
-                "action": "insert", "table": "Lançamentos", "ID": uid,
-                "Data": d_o.isoformat(), "Categoria": cat_sel, "Cartao": card_sel,
-                "Tipo": sinal, "Valor": float(v_val), "Data_Efetiva": d_e.isoformat()
-            }
-            if sync_api(payload):
+    "action": "insert",
+    "table": "Lançamentos",
+    "ID": uid,
+    "Data Lanc.": d_o.isoformat(),
+    "Categoria": cat_sel,
+    "Cartão": card_sel,
+    "Tipo": sinal,
+    "Valor": float(v_val),
+    "Data_Efetiva": d_e.isoformat()  # <--- Com underline aqui também
+}
+            
+                if sync_api(payload):
                 st.toast("Lançamento salvo!")
                 carregar_tudo()
                 st.rerun()
