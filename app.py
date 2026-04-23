@@ -110,7 +110,7 @@ with st.sidebar:
 
     # --- TABELA CATEGORIAS ---
    st.subheader("Categorias")
-    cat_editada = st.data_editor(
+   cat_editada = st.data_editor(
         st.session_state.df_cat,
         column_config={
             "ID": None, 
