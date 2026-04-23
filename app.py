@@ -104,26 +104,22 @@ def calcular_vencimento(data_o, cartao_n):
 # 4. SIDEBAR (TABELAS VIVAS COM BLINDAGEM)
 # =========================================================
 with st.sidebar:
-    st.title("Configurações")
+    st.title("⚙️ Configurações")
     if st.button("Sair / Trocar Base"): logout()
     st.divider()
 
     # --- TABELA CATEGORIAS ---
-   st.subheader("Categorias")
-   cat_editada = st.data_editor(
+    st.subheader("Categorias")
+    cat_editada = st.data_editor(
         st.session_state.df_cat,
         column_config={
             "ID": None, 
-            "id": None,  # Oculta caso a planilha envie em minúsculo
+            "id": None,
             "Tipo": st.column_config.SelectboxColumn("Sinal", options=["+", "-"], required=True)
         },
         num_rows="dynamic", hide_index=True, key="editor_categorias"
     )
 
-    # ... (sua lógica de sincronização continua a mesma) ...
-
-    st.divider()    
-      
     # Lógica de Sincronização Blindada para Categorias
     if len(cat_editada) != len(st.session_state.df_cat):
         if len(cat_editada) > len(st.session_state.df_cat): # Inclusão
@@ -131,7 +127,6 @@ with st.sidebar:
             nova_linha['ID'] = str(uuid.uuid4())
             sync_api({"action": "insert", "table": "Categorias", **nova_linha.to_dict()})
         else: # Exclusão
-            # Verificação segura da coluna ID
             ids_antigos = set(st.session_state.df_cat["ID"].dropna())
             ids_novos = set(cat_editada["ID"].dropna())
             id_removido = list(ids_antigos - ids_novos)
@@ -143,7 +138,7 @@ with st.sidebar:
     st.divider()
 
     # --- TABELA CARTÕES (COM DIAS 1-31) ---
-st.subheader("Cartões")
+    st.subheader("Cartões")
     dias_mes = list(range(1, 32)) # Opções de 1 a 31
     
     card_editado = st.data_editor(
@@ -151,14 +146,14 @@ st.subheader("Cartões")
         column_config={
             "ID": None,
             "id": None,
-            "Cartão": None,  # Oculta a coluna sobressalente com acento
-            "cartão": None,  # Oculta caso venha em minúsculo
-            "Cartao": st.column_config.TextColumn("Cartão", required=True), # Exibe a coluna correta, mas com título amigável
+            "Cartão": None,
+            "cartão": None,
+            "Cartao": st.column_config.TextColumn("Cartão", required=True),
             "Vencimento": st.column_config.SelectboxColumn("Venc.", options=dias_mes, required=True),
             "Fechamento": st.column_config.SelectboxColumn("Fech.", options=dias_mes, required=True)
         },
         num_rows="dynamic", hide_index=True, key="editor_cartoes"
-    )    
+    )
 
     # Lógica de Sincronização Blindada para Cartões
     if len(card_editado) != len(st.session_state.df_card):
