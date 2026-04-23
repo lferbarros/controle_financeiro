@@ -179,8 +179,8 @@ with st.expander("Novo Lançamento", expanded=True):
         cats = st.session_state.df_cat["Categoria"].tolist() if not st.session_state.df_cat.empty else []
         cat_s = st.selectbox("Categoria", cats if cats else ["Cadastre na lateral"]) # cat_sel -> cat_s
     with col3:
-        list_card = ["Não"] + (st.session_state.df_card["Cartão"].tolist() if not st.session_state.df_card.empty else [])
-        card_s = st.selectbox("Cartoes", list_card) # card_sel -> card_s
+        list_card = ["Não"] + (st.session_state.df_card["Cartoes"].tolist() if not st.session_state.df_card.empty else [])
+        card_s = st.selectbox("Cartão", list_card) # card_sel -> card_s
     with col4: valor_s = st.number_input("Valor", min_value=0.0, format="%.2f") # v_val -> valor_s
 
     if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
