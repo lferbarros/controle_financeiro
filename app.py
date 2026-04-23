@@ -45,22 +45,33 @@ def carregar_tudo():
     try:
         res = requests.get(URL_SCRIPT, timeout=10).json()
         
-        # Blindagem: Criar DataFrames e garantir que a coluna 'ID' exista sempre
-        st.session_state.df_cat = pd.DataFrame(res.get('categorias', []))
-        if "ID" not in st.session_state.df_cat.columns:
-            st.session_state.df_cat["ID"] = None
+        # 1. Blindagem Total: Categorias
+        df_cat = pd.DataFrame(res.get('categorias', []))
+        colunas_cat = ["Categoria", "Tipo", "ID"]
+        for col in colunas_cat:
+            if col not in df_cat.columns:
+                df_cat[col] = None
+        st.session_state.df_cat = df_cat
 
-        st.session_state.df_card = pd.DataFrame(res.get('cartoes', []))
-        if "ID" not in st.session_state.df_card.columns:
-            st.session_state.df_card["ID"] = None
+        # 2. Blindagem Total: Cartões (Onde dava o erro)
+        df_card = pd.DataFrame(res.get('cartoes', []))
+        colunas_card = ["Cartão", "Vencimento", "Fechamento", "ID"]
+        for col in colunas_card:
+            if col not in df_card.columns:
+                df_card[col] = None
+        st.session_state.df_card = df_card
 
-        st.session_state.df_lan = pd.DataFrame(res.get('lancamentos', []))
-        if "ID" not in st.session_state.df_lan.columns:
-            st.session_state.df_lan["ID"] = None
+        # 3. Blindagem Total: Lançamentos
+        df_lan = pd.DataFrame(res.get('lancamentos', []))
+        colunas_lan = ["Data", "Categoria", "Cartao", "Valor", "Data_Efetiva", "Tipo", "ID"]
+        for col in colunas_lan:
+            if col not in df_lan.columns:
+                df_lan[col] = None
+        st.session_state.df_lan = df_lan
             
         st.session_state.last_sync = datetime.datetime.now()
     except Exception as e:
-        st.error(f"Erro ao carregar dados: {e}")
+        st.error(f"Erro de conexão: {e}")
 
 if 'df_lan' not in st.session_state:
     carregar_tudo()
