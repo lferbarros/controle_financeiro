@@ -5,7 +5,7 @@ import uuid
 import requests
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="Gestão Financeira Pro", layout="wide")
+st.set_page_config(page_title="Gestor Financeiro", layout="wide")
 
 # =========================================================
 # 1. ACESSO MULTIUSUÁRIO (URL)
@@ -18,7 +18,7 @@ def logout():
     st.rerun()
 
 if not st.session_state.url_base:
-    st.title("🏦 Bem-vindo ao Gestor Financeiro")
+    st.title("Bem-vindo ao Gestor Financeiro")
     url_input = st.text_input("Insira sua URL do Google Apps Script:", type="password")
     if st.button("Conectar e Iniciar"):
         if "script.google.com" in url_input:
@@ -104,7 +104,7 @@ def calcular_vencimento(data_o, cartao_n):
 # 4. SIDEBAR (TABELAS VIVAS COM BLINDAGEM)
 # =========================================================
 with st.sidebar:
-    st.title("⚙️ Configurações")
+    st.title("Configurações")
     if st.button("Sair / Trocar Base"): logout()
     st.divider()
 
@@ -169,10 +169,10 @@ with st.sidebar:
 # =========================================================
 # 5. ÁREA PRINCIPAL
 # =========================================================
-st.title("📊 Gestão Financeira Pessoal")
+st.title("Gestor Financeiro")
 
 # --- Trecho do Formulário de Lançamento ---
-with st.expander("Novo Lançamento", expanded=True):
+with st.expander("Incluir Lançamento", expanded=True):
     col1, col2, col3, col4 = st.columns(4)
     with col1: data_o = st.date_input("Data Lanç.", format="DD/MM/YYYY") # d_o -> data_o
     with col2:
@@ -224,7 +224,7 @@ if not df_vis.empty:
     def style_negative(row):
         return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
 
-    st.subheader("Fluxo Fin. Projetado")
+    st.subheader("Fluxo $ Projetado")
     lan_edit = st.data_editor(
         df_vis.style.apply(style_negative, axis=1),
         column_config={
