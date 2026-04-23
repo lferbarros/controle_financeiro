@@ -92,7 +92,7 @@ if 'df_lan' not in st.session_state:
 # =========================================================
 def calcular_vencimento(data_o, cartao_n):
     if cartao_n == "Não" or st.session_state.df_card.empty: return data_o
-    c = st.session_state.df_card[st.session_state.df_card["Cartão"] == cartao_n]
+    c = st.session_state.df_card[st.session_state.df_card["Cartao"] == cartao_n]
     if c.empty: return data_o
     f, v = int(c.iloc[0]["Fechamento"]), int(c.iloc[0]["Vencimento"])
     dt_f = datetime.date(data_o.year, data_o.month, f)
