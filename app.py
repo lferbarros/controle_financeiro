@@ -174,7 +174,7 @@ st.title("📊 Gestão Financeira Pessoal")
 # --- Trecho do Formulário de Lançamento ---
 with st.expander("Novo Lançamento", expanded=True):
     col1, col2, col3, col4 = st.columns(4)
-    with col1: data_o = st.date_input("Data Compra", format="DD/MM/YYYY") # d_o -> data_o
+    with col1: data_o = st.date_input("Data Lanç.", format="DD/MM/YYYY") # d_o -> data_o
     with col2:
         cats = st.session_state.df_cat["Categoria"].tolist() if not st.session_state.df_cat.empty else []
         cat_s = st.selectbox("Categoria", cats if cats else ["Cadastre na lateral"]) # cat_sel -> cat_s
@@ -224,12 +224,13 @@ if not df_vis.empty:
     def style_negative(row):
         return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
 
-    st.subheader("Projeção de Saldo")
+    st.subheader("Fluxo Fin. Projetado")
     lan_edit = st.data_editor(
         df_vis.style.apply(style_negative, axis=1),
         column_config={
             "ID": None,
-            "Data": st.column_config.DateColumn("Data Compra", format="DD/MM/YYYY"),
+            "Tipo": None,
+            "Data": st.column_config.DateColumn("Data Lanç.", format="DD/MM/YYYY"),
             "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
             "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
             "Saldo Acumulado": st.column_config.NumberColumn("Saldo Acumulado", format="R$ %.2f")
