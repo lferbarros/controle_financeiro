@@ -218,7 +218,7 @@ def get_render_df():
     df['Saldo Acumulado'] = (df['Valor'] * sinais).cumsum()
     return df
 
-df_vis = get_render_df()
+df_vis = get_render_df().reset_index(drop=True) # Adicione o reset_index aqui
 
 if not df_vis.empty:
     def style_negative(row):
