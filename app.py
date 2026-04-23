@@ -237,7 +237,10 @@ if not df_vis.empty:
             "Saldo Acumulado": st.column_config.NumberColumn("Saldo Acumulado", format="R$ %.2f")
         },
         disabled=df_vis.columns, 
-        num_rows="dynamic", hide_index=True, use_container_width=True, key="main_table"
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+        key="main_table"
     )
 
     if len(lan_edit) < len(df_vis):
