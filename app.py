@@ -230,6 +230,7 @@ if not df_vis.empty:
         column_config={
             "ID": None,
             "Tipo": None,
+            "Cartao": st.column_config.TextColumn("Cartão"), # Volta o acento apenas na etiqueta
             "Data": st.column_config.DateColumn("Data Lanç.", format="DD/MM/YYYY"),
             "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
             "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
