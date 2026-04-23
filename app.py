@@ -184,9 +184,7 @@ with st.expander("➕ Novo Lançamento", expanded=True):
     with col4: valor_s = st.number_input("Valor", min_value=0.0, format="%.2f") # v_val -> valor_s
 
     if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
-        if cat_s in cats: # Agora 'cat_s' está definido acima
-            # ... mantém o resto do código do payload enviado anteriormente ...
-
+            # Agora 'cat_s' está definido acima
             # --- Trecho dentro do botão de Confirmação ---
         if cat_s in cats:
             sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_s, "Tipo"].values[0]
