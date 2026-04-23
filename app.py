@@ -171,19 +171,23 @@ with st.sidebar:
 # =========================================================
 st.title("📊 Gestão Financeira Pessoal")
 
+# --- Trecho do Formulário de Lançamento ---
 with st.expander("➕ Novo Lançamento", expanded=True):
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: d_o = st.date_input("Data Compra", format="DD/MM/YYYY")
-    with c2:
-        list_cat = st.session_state.df_cat["Categoria"].tolist() if not st.session_state.df_cat.empty else []
-        cat_sel = st.selectbox("Categoria", list_cat if list_cat else ["Cadastre na lateral"])
-    with c3:
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: data_o = st.date_input("Data Compra", format="DD/MM/YYYY") # d_o -> data_o
+    with col2:
+        cats = st.session_state.df_cat["Categoria"].tolist() if not st.session_state.df_cat.empty else []
+        cat_s = st.selectbox("Categoria", cats if cats else ["Cadastre na lateral"]) # cat_sel -> cat_s
+    with col3:
         list_card = ["Não"] + (st.session_state.df_card["Cartão"].tolist() if not st.session_state.df_card.empty else [])
-        card_sel = st.selectbox("Cartão", list_card)
-    with c4: v_val = st.number_input("Valor", min_value=0.0, format="%.2f")
+        card_s = st.selectbox("Cartão", list_card) # card_sel -> card_s
+    with col4: valor_s = st.number_input("Valor", min_value=0.0, format="%.2f") # v_val -> valor_s
 
     if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
-       # --- Trecho dentro do botão de Confirmação ---
+        if cat_s in cats: # Agora 'cat_s' está definido acima
+            # ... mantém o resto do código do payload enviado anteriormente ...
+
+            # --- Trecho dentro do botão de Confirmação ---
         if cat_s in cats:
             sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_s, "Tipo"].values[0]
             data_e = calcular_vencimento(data_o, card_s)
