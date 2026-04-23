@@ -62,13 +62,24 @@ def carregar_tudo():
         st.session_state.df_card = df_card
 
         # 3. Blindagem Total: Lançamentos
-        df_lan = pd.DataFrame(res.get('lancamentos', []))
-        colunas_lan = ["Data", "Categoria", "Cartao", "Valor", "Data_Efetiva", "Tipo", "ID"]
-        for col in colunas_lan:
-            if col not in df_lan.columns:
-                df_lan[col] = None
-        st.session_state.df_lan = df_lan
-            
+        
+      # 3. Blindagem Total: Lançamentos (Ajustado para 'Data Lanc.')
+df_lan = pd.DataFrame(res.get('lancamentos', []))
+
+# Mapeia 'Data Lanc.' da planilha para 'Data' no DataFrame do Python, se necessário
+if "Data Lanc." in df_lan.columns:
+    df_lan = df_lan.rename(columns={"Data Lanc.": "Data"})
+
+# Lista de colunas essenciais que o app precisa para não travar
+colunas_lan = ["Data", "Categoria", "Cartao", "Valor", "Data_Efetiva", "Tipo", "ID"]
+
+for col in colunas_lan:
+    if col not in df_lan.columns:
+        # Se a coluna não existir (ex: erro de digitação na planilha), cria ela vazia
+        df_lan[col] = None
+
+st.session_state.df_lan = df_lan
+          
         st.session_state.last_sync = datetime.datetime.now()
     except Exception as e:
         st.error(f"Erro de conexão: {e}")
