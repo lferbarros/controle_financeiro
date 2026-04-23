@@ -62,24 +62,23 @@ def carregar_tudo():
         st.session_state.df_card = df_card
 
 # 3. Blindagem Total: Lançamentos
+      
+        # --- Trecho dentro de carregar_tudo() para Lançamentos ---
         df_lan = pd.DataFrame(res.get('lancamentos', []))
 
-        # Padronização de nomes vindos da Planilha para o Python
+        # Correção do Bug: Mapeia os nomes da planilha para os nomes do código
         mapeamento = {
             "Data Lanc.": "Data",
-            "Data_Efetiva": "Data_Efetiva",
-            "Cartão": "Cartao" # Garante que o Python ache 'Cartao' mesmo com acento na planilha
+            "Cartão": "Cartao"
         }
         df_lan = df_lan.rename(columns=mapeamento)
 
-        # Colunas que o resto do seu código Python espera encontrar
+        # Garante que as colunas existam no DataFrame interno
         colunas_lan = ["Data", "Categoria", "Cartao", "Valor", "Data_Efetiva", "Tipo", "ID"]
-
         for col in colunas_lan:
             if col not in df_lan.columns:
                 df_lan[col] = None
-
-        st.session_state.df_lan = df_lan        
+        st.session_state.df_lan = df_lan
         
         st.session_state.last_sync = datetime.datetime.now()
     except Exception as e:
@@ -184,27 +183,28 @@ with st.expander("➕ Novo Lançamento", expanded=True):
     with c4: v_val = st.number_input("Valor", min_value=0.0, format="%.2f")
 
     if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
-        if not st.session_state.df_cat.empty and cat_sel in list_cat:
-            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_sel, "Tipo"].values[0]
-            d_e = calcular_vencimento(d_o, card_sel)
+       # --- Trecho dentro do botão de Confirmação ---
+        if cat_s in cats:
+            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_s, "Tipo"].values[0]
+            data_e = calcular_vencimento(data_o, card_s)
             uid = str(uuid.uuid4())
-            payload = {
-    "action": "insert",
-    "table": "Lançamentos",
-    "ID": uid,
-    "Data Lanc.": d_o.isoformat(),
-    "Categoria": cat_sel,
-    "Cartão": card_sel,
-    "Tipo": sinal,
-    "Valor": float(v_val),
-    "Data_Efetiva": d_e.isoformat()  # <--- Com underline aqui também
-}
             
-                if sync_api(payload):
+            payload = {
+                "action": "insert", 
+                "table": "Lançamentos", 
+                "ID": uid,
+                "Data Lanc.": data_o.isoformat(), # Nome exato na planilha
+                "Categoria": cat_s, 
+                "Cartão": card_s,            # Nome exato na planilha com acento
+                "Tipo": sinal, 
+                "Valor": float(valor_s), 
+                "Data_Efetiva": data_e.isoformat()
+            }
+            if sync_api(payload):
                 st.toast("Lançamento salvo!")
                 carregar_tudo()
                 st.rerun()
-
+        
 # --- TABELA DE FLUXO ---
 def get_render_df():
     if st.session_state.df_lan.empty: return pd.DataFrame()
