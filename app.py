@@ -315,5 +315,5 @@ if not df_vis.empty:
             c3.metric("Saldo Semanal", f"R$ {row['Saldo']:,.2f}", delta=f"{row['Saldo']:,.2f}")
             st.divider()
     
-    else:
+else:
     st.info("Aguardando lançamentos.")
