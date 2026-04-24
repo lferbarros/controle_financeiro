@@ -300,7 +300,7 @@ if not df_vis.empty:
 
     # 3. BLOCO DO RESUMO SEMANAL (Horizonte 5 Semanas)
     df_sem = get_resumo_semanal()
-    with st.expander("📊 Resumo por Período (Atual + 4 Semanas)", expanded=True):
+    with st.expander("Resumo semanal)", expanded=False):
         for _, row in df_sem.iterrows():
             sem_inicio = row['Semana']
             sem_fim = sem_inicio + datetime.timedelta(days=6)
