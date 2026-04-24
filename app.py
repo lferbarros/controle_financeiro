@@ -211,7 +211,11 @@ with st.expander("Incluir Lançamento", expanded=False):
                 carregar_tudo()
                 st.rerun()
         
-# --- TABELA DE FLUXO ---
+
+# =========================================================
+# 6. PROCESSAMENTO E VISUALIZAÇÃO (TABELA + RESUMO)
+# =========================================================
+
 def get_render_df():
     if st.session_state.df_lan.empty: return pd.DataFrame()
     df = st.session_state.df_lan.copy()
@@ -222,42 +226,34 @@ def get_render_df():
     df['Saldo Acumulado'] = (df['Valor'] * sinais).cumsum()
     return df
 
-df_vis = get_render_df().reset_index(drop=True) # Adicione o reset_index aqui
-
-if not df_vis.empty:
-    def style_negative(row):
-        return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
-
 def get_resumo_semanal():
-    if st.session_state.df_lan.empty: return pd.DataFrame()
     df = st.session_state.df_lan.copy()
-    
-    # 1. Preparação dos dados
+    if df.empty: return pd.DataFrame()
     df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce')
     df = df.dropna(subset=["Data_Efetiva"])
     df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
-    
-    # 2. Criar coluna da Semana (Iniciando na Segunda)
-    # W-MON garante que a semana seja identificada pela segunda-feira inicial
+    # Agrupa por semana (começando na segunda-feira)
     df['Semana'] = df['Data_Efetiva'].dt.to_period('W-SUN').apply(lambda r: r.start_time)
-    
-    # 3. Agrupar por Semana e Tipo
     resumo = df.groupby(['Semana', 'Tipo'])['Valor'].sum().unstack(fill_value=0)
-    
-    # Garantir que as colunas + e - existam para não dar erro no gráfico
     if '+' not in resumo.columns: resumo['+'] = 0.0
     if '-' not in resumo.columns: resumo['-'] = 0.0
-    
     resumo['Saldo'] = resumo['+'] - resumo['-']
-    resumo = resumo.sort_index(ascending=True)
-    return resumo.reset_index()
+    return resumo.reset_index().sort_values("Semana")
 
-  
-   # Substituímos o subheader pelo expander
+# --- EXECUÇÃO DA INTERFACE ---
+df_vis = get_render_df()
+
+if not df_vis.empty:
+    # 1. ESTILO
+    def style_negative(row):
+        return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
+
+    # 2. BLOCO DA TABELA PRINCIPAL
     with st.expander("Fluxo Projetado", expanded=True):
         lan_edit = st.data_editor(
             df_vis.style.apply(style_negative, axis=1),
-        column_config={
+            
+             column_config={
             "ID": None,
             "Tipo": None,
             "Cartao": st.column_config.TextColumn("Cartão"), # Volta o acento apenas na etiqueta
@@ -266,17 +262,37 @@ def get_resumo_semanal():
             "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
             "Saldo Acumulado": st.column_config.NumberColumn("Saldo Acumulado", format="R$ %.2f")
         },
-        disabled=df_vis.columns, 
-        num_rows="dynamic",
-        hide_index=True,
-        use_container_width=True,
-        key="main_table"
+
+            disabled=df_vis.columns, 
+            num_rows="dynamic",
+            hide_index=True,
+            use_container_width=True,
+            key="main_table"
     )
 
-    if len(lan_edit) < len(df_vis):
-        id_morto = list(set(df_vis["ID"].dropna()) - set(lan_edit["ID"].dropna()))[0]
-        if sync_api({"action": "delete", "table": "Lançamentos", "ID": id_morto}):
-            carregar_tudo()
-            st.rerun()
+        # Lógica de Exclusão
+        if len(lan_edit) < len(df_vis):
+            ids_vivos = set(lan_edit["ID"].dropna())
+            ids_antigos = set(df_vis["ID"].dropna())
+            id_morto = list(ids_antigos - ids_vivos)
+            if id_morto and sync_api({"action": "delete", "table": "Lançamentos", "ID": id_morto[0]}):
+                carregar_tudo()
+                st.rerun()
+
+    # 3. BLOCO DO RESUMO SEMANAL (Dentro do 'if' para garantir que há dados)
+    df_sem = get_resumo_semanal()
+    with st.expander("📊 Resumo Semanal (Fluxo de Caixa)", expanded=True):
+        if not df_sem.empty:
+            ultima = df_sem.iloc[-1]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Entradas (Semana)", f"R$ {ultima['+']:,.2f}")
+            c2.metric("Saídas (Semana)", f"R$ {ultima['-']:,.2f}", delta_color="inverse")
+            c3.metric("Saldo Semanal", f"R$ {ultima['Saldo']:,.2f}")
+            
+            st.divider()
+            st.write("**Histórico de Fluxo**")
+            df_chart = df_sem.melt(id_vars='Semana', value_vars=['+', '-'], var_name='Fluxo', value_name='Valor')
+            df_chart['Fluxo'] = df_chart['Fluxo'].map({'+': 'Entradas', '-': 'Saídas'})
+            st.bar_chart(df_chart, x="Semana", y="Valor", color="Fluxo", stack=False)
 else:
     st.info("Aguardando lançamentos.")
