@@ -130,15 +130,27 @@ with st.sidebar:
         column_config={"ID": None, "Cartao": "Nome", "Vencimento": "Venc (dia)", "Fechamento": "Fech (dia)"},
         num_rows="dynamic", hide_index=True, key="widget_card"
     )
-    # Lógica Atômica Cartões
-    if st.session_state.widget_card["added_rows"] or st.session_state.widget_card["deleted_rows"]:
-        with st.spinner("Atualizando..."):
+  # Lógica Atômica Cartões (Versão Corrigida)
+    if st.session_state.widget_card["added_rows"] or st.session_state.widget_card["deleted_rows"] or st.session_state.widget_card["edited_rows"]:
+        with st.spinner("Sincronizando Cartões..."):
+            # 1. Processar Adições
             for row in st.session_state.widget_card["added_rows"]:
                 row["ID"] = str(uuid.uuid4())
-                sync_api({"action": "insert", "table": "Cartoes", **row})
+                # Garante que o nome da coluna enviado seja 'Cartao' para o Apps Script
+                payload = {"action": "insert", "table": "Cartoes", **row}
+                sync_api(payload)
+
+            # 2. Processar Exclusões (O ponto crítico)
             for idx in st.session_state.widget_card["deleted_rows"]:
-                id_a = st.session_state.df_card.iloc[idx]["ID"]
-                sync_api({"action": "delete", "table": "Cartoes", "ID": id_a})
+                # Buscamos o ID de forma segura no DataFrame original usando o índice fornecido pelo widget
+                try:
+                    id_a = str(st.session_state.df_card.iloc[idx]["ID"])
+                    if sync_api({"action": "delete", "table": "Cartoes", "ID": id_a}):
+                        st.toast(f"Cartão removido com sucesso!")
+                except Exception as e:
+                    st.error(f"Erro ao localizar ID para exclusão: {e}")
+
+            # 3. Finalização
             carregar_tudo()
             st.rerun()
 
