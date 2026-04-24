@@ -228,6 +228,31 @@ if not df_vis.empty:
     def style_negative(row):
         return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
 
+def get_resumo_semanal():
+    if st.session_state.df_lan.empty: return pd.DataFrame()
+    df = st.session_state.df_lan.copy()
+    
+    # 1. Preparação dos dados
+    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce')
+    df = df.dropna(subset=["Data_Efetiva"])
+    df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
+    
+    # 2. Criar coluna da Semana (Iniciando na Segunda)
+    # W-MON garante que a semana seja identificada pela segunda-feira inicial
+    df['Semana'] = df['Data_Efetiva'].dt.to_period('W-SUN').apply(lambda r: r.start_time)
+    
+    # 3. Agrupar por Semana e Tipo
+    resumo = df.groupby(['Semana', 'Tipo'])['Valor'].sum().unstack(fill_value=0)
+    
+    # Garantir que as colunas + e - existam para não dar erro no gráfico
+    if '+' not in resumo.columns: resumo['+'] = 0.0
+    if '-' not in resumo.columns: resumo['-'] = 0.0
+    
+    resumo['Saldo'] = resumo['+'] - resumo['-']
+    resumo = resumo.sort_index(ascending=True)
+    return resumo.reset_index()
+
+  
    # Substituímos o subheader pelo expander
     with st.expander("Fluxo Projetado", expanded=True):
         lan_edit = st.data_editor(
