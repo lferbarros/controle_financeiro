@@ -5,10 +5,10 @@ import uuid
 import requests
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="Gestor Financeiro", layout="wide")
+st.set_page_config(page_title="Gestor Financeiro PRO", layout="wide")
 
 # =========================================================
-# 1. ACESSO MULTIUSUÁRIO (URL)
+# 1. GERENCIAMENTO DE CONEXÃO
 # =========================================================
 if "url_base" not in st.session_state:
     st.session_state.url_base = ""
@@ -18,373 +18,241 @@ def logout():
     st.rerun()
 
 if not st.session_state.url_base:
-    st.title("Bem-vindo ao Gestor Financeiro")
+    st.title("🚀 Gestor Financeiro")
     url_input = st.text_input("Insira sua URL do Google Apps Script:", type="password")
-    if st.button("Conectar e Iniciar"):
+    if st.button("Conectar Sistema"):
         if "script.google.com" in url_input:
             st.session_state.url_base = url_input
             st.rerun()
         else:
-            st.error("URL inválida.")
+            st.error("URL inválida. Certifique-se de usar o link de 'Execução Web'.")
     st.stop()
 
 URL_SCRIPT = st.session_state.url_base
 
 # =========================================================
-# 2. FUNÇÕES DE SINCRONIZAÇÃO (SUA VERSÃO ESTÁVEL)
+# 2. MOTOR DE SINCRONIZAÇÃO (ROBUSTEZ TOTAL)
 # =========================================================
 def sync_api(payload):
+    """Envia dados para o Google Sheets e valida o sucesso."""
     try:
-        requests.post(URL_SCRIPT, json=payload, timeout=10)
-        return True
-    except:
+        # Padronização de nomes de colunas para o Google Sheets
+        if "Cartao" in payload: payload["Cartão"] = payload.pop("Cartao")
+        if "Data" in payload: payload["Data Lanc."] = payload.pop("Data")
+        
+        response = requests.post(URL_SCRIPT, json=payload, timeout=15)
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"Falha na comunicação: {e}")
         return False
 
 def carregar_tudo():
-    if not URL_SCRIPT: return
+    """Recarrega todas as abas da planilha para o estado local."""
     try:
-        res = requests.get(URL_SCRIPT, timeout=10).json()
+        res = requests.get(URL_SCRIPT, timeout=15).json()
         
-        # 1. Blindagem Total: Categorias
+        # Categorias
         df_cat = pd.DataFrame(res.get('categorias', []))
-        colunas_cat = ["Categoria", "Tipo", "ID"]
-        for col in colunas_cat:
-            if col not in df_cat.columns:
-                df_cat[col] = None
+        for c in ["Categoria", "Tipo", "ID"]:
+            if c not in df_cat.columns: df_cat[c] = None
         st.session_state.df_cat = df_cat
 
-        # 2. Blindagem Total: Cartões (Onde dava o erro)
+        # Cartões
         df_card = pd.DataFrame(res.get('cartoes', []))
-        colunas_card = ["Cartão", "Vencimento", "Fechamento", "ID"]
-        for col in colunas_card:
-            if col not in df_card.columns:
-                df_card[col] = None
+        # Normaliza nome da coluna vindo da planilha
+        if "Cartão" in df_card.columns: df_card = df_card.rename(columns={"Cartão": "Cartao"})
+        for c in ["Cartao", "Vencimento", "Fechamento", "ID"]:
+            if c not in df_card.columns: df_card[c] = None
         st.session_state.df_card = df_card
 
-# 3. Blindagem Total: Lançamentos
-      
-        # --- Trecho dentro de carregar_tudo() para Lançamentos ---
+        # Lançamentos
         df_lan = pd.DataFrame(res.get('lancamentos', []))
-
-        # Correção do Bug: Mapeia os nomes da planilha para os nomes do código
-        mapeamento = {
-            "Data Lanc.": "Data",
-            "Cartão": "Cartao"
-        }
+        mapeamento = {"Data Lanc.": "Data", "Cartão": "Cartao"}
         df_lan = df_lan.rename(columns=mapeamento)
-
-        # Garante que as colunas existam no DataFrame interno
-        colunas_lan = ["Data", "Categoria", "Cartao", "Valor", "Data_Efetiva", "Tipo", "ID"]
-        for col in colunas_lan:
-            if col not in df_lan.columns:
-                df_lan[col] = None
+        for c in ["Data", "Categoria", "Cartao", "Valor", "Data_Efetiva", "Tipo", "ID"]:
+            if c not in df_lan.columns: df_lan[c] = None
         st.session_state.df_lan = df_lan
         
         st.session_state.last_sync = datetime.datetime.now()
+        return True
     except Exception as e:
-        st.error(f"Erro de conexão: {e}")
+        st.error(f"Erro ao baixar dados: {e}")
+        return False
 
+# Inicialização única
 if 'df_lan' not in st.session_state:
     carregar_tudo()
 
 # =========================================================
-# 3. LÓGICA DE NEGÓCIO
+# 3. CÁLCULOS E LÓGICA
 # =========================================================
 def calcular_vencimento(data_o, cartao_n):
     if cartao_n == "Não" or st.session_state.df_card.empty: return data_o
     c = st.session_state.df_card[st.session_state.df_card["Cartao"] == cartao_n]
     if c.empty: return data_o
-    f, v = int(c.iloc[0]["Fechamento"]), int(c.iloc[0]["Vencimento"])
-    dt_f = datetime.date(data_o.year, data_o.month, f)
-    base = data_o + relativedelta(months=1) if data_o.day > f else data_o
-    try: return datetime.date(base.year, base.month, v)
-    except: return datetime.date(base.year, base.month, 28)
+    try:
+        f, v = int(c.iloc[0]["Fechamento"]), int(c.iloc[0]["Vencimento"])
+        base = data_o + relativedelta(months=1) if data_o.day > f else data_o
+        return datetime.date(base.year, base.month, v)
+    except:
+        return data_o + relativedelta(months=1)
 
 # =========================================================
-# 4. SIDEBAR (TABELAS VIVAS COM BLINDAGEM)
+# 4. SIDEBAR - CONFIGURAÇÕES (EDITORES ROBUSTOS)
 # =========================================================
 with st.sidebar:
-    st.title("Configurações")
-    if st.button("Sair / Trocar Base"): logout()
+    st.title("⚙️ Configurações")
+    if st.button("🔄 Forçar Atualização"): 
+        carregar_tudo()
+        st.rerun()
+    if st.button("🚪 Sair do Sistema"): logout()
     st.divider()
 
-    # --- TABELA CATEGORIAS ---
+    # --- CATEGORIAS ---
     st.subheader("Categorias")
-    cat_editada = st.data_editor(
+    editor_cat = st.data_editor(
         st.session_state.df_cat,
         column_config={
-            "ID": None, 
-            "id": None,
+            "ID": None, "id": None,
             "Tipo": st.column_config.SelectboxColumn("Sinal", options=["+", "-"], required=True)
         },
-        num_rows="dynamic", hide_index=True, key="editor_categorias"
+        num_rows="dynamic", hide_index=True, key="edit_cat_widget"
     )
 
-    # Lógica de Sincronização Blindada para Categorias
-    if len(cat_editada) != len(st.session_state.df_cat):
-        ids_antigos = set(st.session_state.df_cat["ID"].dropna())
-        ids_novos = set(cat_editada["ID"].dropna())
-        ids_removidos = list(ids_antigos - ids_novos)
-
-        if ids_removidos: # Exclusão
-            with st.spinner("Deletando categoria..."):
-                for id_alvo in ids_removidos:
-                    sync_api({"action": "delete", "table": "Categorias", "ID": id_alvo})
-                    # Atualização Otimista: remove do estado local na hora
-                    st.session_state.df_cat = st.session_state.df_cat[st.session_state.df_cat["ID"] != id_alvo]
+    # Detecção de mudança por estado (Mais estável que comparar len)
+    if st.session_state.edit_cat_widget["edited_rows"] or \
+       st.session_state.edit_cat_widget["added_rows"] or \
+       st.session_state.edit_cat_widget["deleted_rows"]:
         
-        elif len(cat_editada) > len(st.session_state.df_cat): # Inclusão
-            with st.spinner("Adicionando categoria..."):
-                nova_linha = cat_editada.iloc[-1].copy()
-                nova_linha['ID'] = str(uuid.uuid4())
-                sync_api({"action": "insert", "table": "Categorias", **nova_linha.to_dict()})
-                # Atualização Otimista: adiciona no estado local na hora
-                st.session_state.df_cat = pd.concat([st.session_state.df_cat, pd.DataFrame([nova_linha])], ignore_index=True)
-
-        # A "bala de prata" contra o loop: limpa a memória temporária do widget
-        if "editor_categorias" in st.session_state:
-            del st.session_state["editor_categorias"]
+        changes = st.session_state.edit_cat_widget
+        sucesso_total = True
+        
+        with st.spinner("Sincronizando..."):
+            # Deletar
+            for idx in changes["deleted_rows"]:
+                id_alvo = st.session_state.df_cat.iloc[idx]["ID"]
+                if not sync_api({"action": "delete", "table": "Categorias", "ID": id_alvo}): sucesso_total = False
+            # Adicionar
+            for row in changes["added_rows"]:
+                row["ID"] = str(uuid.uuid4())
+                if not sync_api({"action": "insert", "table": "Categorias", **row}): sucesso_total = False
             
-        st.rerun() # Reinicia a interface com os dados já atualizados
-      
-    st.divider()
-
-    # --- TABELA CARTÕES (COM DIAS 1-31) ---
-    st.subheader("Cartões")
-    dias_mes = list(range(1, 32)) # Opções de 1 a 31
-    
-    card_editado = st.data_editor(
-        st.session_state.df_card,
-        column_config={
-            "ID": None,
-            "id": None,
-            "Cartão": None,
-            "cartão": None,
-            "Cartao": st.column_config.TextColumn("Cartão", required=True),
-            "Vencimento": st.column_config.SelectboxColumn("Venc.", options=dias_mes, required=True),
-            "Fechamento": st.column_config.SelectboxColumn("Fech.", options=dias_mes, required=True)
-        },
-        num_rows="dynamic", hide_index=True, key="editor_cartoes"
-    )
-
-   # Lógica de Sincronização Ultra-Robusta para Cartões
-    if len(card_editado) != len(st.session_state.df_card):
-        ids_antigos = set(st.session_state.df_card["ID"].dropna())
-        ids_novos = set(card_editado["ID"].dropna())
-        
-        # Caso 1: EXCLUSÃO
-        ids_removidos = list(ids_antigos - ids_novos)
-        if ids_removidos:
-            with st.spinner("Sincronizando exclusão com Google Sheets..."):
-                for id_alvo in ids_removidos:
-                    # Tenta atualizar a planilha primeiro
-                    sucesso = sync_api({"action": "delete", "table": "Cartoes", "ID": id_alvo})
-                    
-                    if sucesso:
-                        # Só remove do estado local se a API confirmou sucesso
-                        st.session_state.df_card = st.session_state.df_card[st.session_state.df_card["ID"] != id_alvo]
-                    else:
-                        st.error(f"Erro ao deletar ID {id_alvo} na planilha. Tente novamente.")
-                        st.stop() # Interrompe para evitar loop e inconsistência
-
-        # Caso 2: INCLUSÃO
-        elif len(card_editado) > len(st.session_state.df_card):
-            with st.spinner("Sincronizando novo cartão..."):
-                nova_linha = card_editado.iloc[-1].copy()
-                nova_linha['ID'] = str(uuid.uuid4())
-                
-                sucesso = sync_api({"action": "insert", "table": "Cartoes", **nova_linha.to_dict()})
-                
-                if sucesso:
-                    st.session_state.df_card = pd.concat([st.session_state.df_card, pd.DataFrame([nova_linha])], ignore_index=True)
-                else:
-                    st.error("Erro ao inserir na planilha. Verifique a conexão.")
-                    st.stop()
-
-        # Limpeza obrigatória do estado do widget para matar o loop
-        for key in st.session_state.keys():
-            if "editor_cartoes" in key:
-                del st.session_state[key]
-        
-        st.rerun()
-      
-# =========================================================
-# 5. ÁREA PRINCIPAL
-# =========================================================
-st.title("Gestor Financeiro")
-
-# --- Trecho do Formulário de Lançamento ---
-with st.expander("Incluir Lançamento", expanded=False):
-    col1, col2, col3, col4 = st.columns(4)
-    with col1: data_o = st.date_input("Data Lanç.", format="DD/MM/YYYY") # d_o -> data_o
-    with col2:
-        cats = st.session_state.df_cat["Categoria"].tolist() if not st.session_state.df_cat.empty else []
-        cat_s = st.selectbox("Categoria", cats if cats else ["Cadastre na lateral"]) # cat_sel -> cat_s
-    with col3:
-        list_card = ["Não"] + (st.session_state.df_card["Cartao"].tolist() if not st.session_state.df_card.empty else [])
-        card_s = st.selectbox("Cartão", list_card) # card_sel -> card_s
-    with col4: valor_s = st.number_input("Valor", min_value=0.0, format="%.2f") # v_val -> valor_s
-
-    if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
-            # Agora 'cat_s' está definido acima
-            # --- Trecho dentro do botão de Confirmação ---
-        if cat_s in cats:
-            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_s, "Tipo"].values[0]
-            data_e = calcular_vencimento(data_o, card_s)
-            uid = str(uuid.uuid4())
-            
-            payload = {
-                "action": "insert", 
-                "table": "Lançamentos", 
-                "ID": uid,
-                "Data Lanc.": data_o.isoformat(), # Nome exato na planilha
-                "Categoria": cat_s, 
-                "Cartão": card_s,            # Nome exato na planilha com acento
-                "Tipo": sinal, 
-                "Valor": float(valor_s), 
-                "Data_Efetiva": data_e.isoformat()
-            }
-            if sync_api(payload):
-                st.toast("Lançamento salvo!")
+            if sucesso_total:
                 carregar_tudo()
                 st.rerun()
+
+    st.divider()
+
+    # --- CARTÕES ---
+    st.subheader("Cartões")
+    editor_card = st.data_editor(
+        st.session_state.df_card,
+        column_config={
+            "ID": None, "id": None,
+            "Cartao": st.column_config.TextColumn("Nome Cartão", required=True),
+            "Vencimento": st.column_config.NumberColumn("Dia Venc.", min_value=1, max_value=31),
+            "Fechamento": st.column_config.NumberColumn("Dia Fech.", min_value=1, max_value=31)
+        },
+        num_rows="dynamic", hide_index=True, key="edit_card_widget"
+    )
+
+    if st.session_state.edit_card_widget["edited_rows"] or \
+       st.session_state.edit_card_widget["added_rows"] or \
+       st.session_state.edit_card_widget["deleted_rows"]:
         
+        changes = st.session_state.edit_card_widget
+        sucesso_total = True
+        
+        with st.spinner("Sincronizando Cartões..."):
+            for idx in changes["deleted_rows"]:
+                id_alvo = st.session_state.df_card.iloc[idx]["ID"]
+                if not sync_api({"action": "delete", "table": "Cartoes", "ID": id_alvo}): sucesso_total = False
+            for row in changes["added_rows"]:
+                row["ID"] = str(uuid.uuid4())
+                if not sync_api({"action": "insert", "table": "Cartoes", **row}): sucesso_total = False
+            
+            if sucesso_total:
+                carregar_tudo()
+                st.rerun()
 
 # =========================================================
-# 6. PROCESSAMENTO E VISUALIZAÇÃO (TABELA + RESUMO)
+# 5. ÁREA PRINCIPAL - LANÇAMENTOS
 # =========================================================
+st.title("💰 Fluxo de Caixa Projetado")
 
+with st.expander("➕ Novo Lançamento", expanded=False):
+    c1, c2, c3, c4 = st.columns(4)
+    data_l = c1.date_input("Data Compra", format="DD/MM/YYYY")
+    
+    cats = st.session_state.df_cat["Categoria"].dropna().tolist()
+    cat_sel = c2.selectbox("Categoria", cats if cats else ["Cadastre uma categoria"])
+    
+    cards = ["Não"] + st.session_state.df_card["Cartao"].dropna().tolist()
+    card_sel = c3.selectbox("Cartão", cards)
+    
+    valor_l = c4.number_input("Valor R$", min_value=0.0, step=10.0, format="%.2f")
+
+    if st.button("Salvar Lançamento", use_container_width=True, type="primary"):
+        if not cats:
+            st.warning("Adicione categorias na barra lateral primeiro.")
+        else:
+            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_sel, "Tipo"].values[0]
+            dt_efetiva = calcular_vencimento(data_l, card_sel)
+            
+            payload = {
+                "action": "insert", "table": "Lançamentos", "ID": str(uuid.uuid4()),
+                "Data": data_l.isoformat(), "Categoria": cat_sel, "Cartao": card_sel,
+                "Tipo": sinal, "Valor": float(valor_l), "Data_Efetiva": dt_efetiva.isoformat()
+            }
+            
+            if sync_api(payload):
+                st.toast("Sucesso!")
+                carregar_tudo()
+                st.rerun()
+
+# =========================================================
+# 6. PROCESSAMENTO E EXIBIÇÃO
+# =========================================================
 def get_render_df():
     if st.session_state.df_lan.empty: return pd.DataFrame()
     df = st.session_state.df_lan.copy()
-    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce')
+    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce').dt.date
     df = df.dropna(subset=["Data_Efetiva"]).sort_values("Data_Efetiva")
     df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
     sinais = df['Tipo'].apply(lambda x: 1 if str(x).strip() == "+" else -1)
     df['Saldo Acumulado'] = (df['Valor'] * sinais).cumsum()
     return df
 
-def get_resumo_semanal():
-    df = st.session_state.df_lan.copy()
-    
-    # 1. Horizonte de 5 semanas
-    hoje = datetime.date.today()
-    segunda_atual = hoje - datetime.timedelta(days=hoje.weekday())
-    datas_semanas = [segunda_atual + datetime.timedelta(weeks=i) for i in range(5)]
-    
-    # 2. Preparação de dados (Histórico Completo)
-    if df.empty:
-        return pd.DataFrame({'Semana': datas_semanas, '+': 0.0, '-': 0.0, 'Variacao': 0.0, 'Saldo_Acum': 0.0})
-
-    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce').dt.date
-    df = df.dropna(subset=["Data_Efetiva"]).sort_values("Data_Efetiva")
-    df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
-    
-    # Cálculo do saldo acumulado linha a linha no tempo
-    sinais = df['Tipo'].apply(lambda x: 1 if str(x).strip() == "+" else -1)
-    df['Acumulado_Historico'] = (df['Valor'] * sinais).cumsum()
-    
-    # Identificar a semana de cada lançamento
-    df['Sem_Ref'] = df['Data_Efetiva'].apply(lambda x: x - datetime.timedelta(days=x.weekday()))
-    
-    # Agrupar variações semanais (Entradas e Saídas)
-    resumo_vendas = df.groupby(['Sem_Ref', 'Tipo'])['Valor'].sum().unstack(fill_value=0)
-    if '+' not in resumo_vendas.columns: resumo_vendas['+'] = 0.0
-    if '-' not in resumo_vendas.columns: resumo_vendas['-'] = 0.0
-    resumo_vendas['Variacao'] = resumo_vendas['+'] - resumo_vendas['-']
-    
-    # Pegar o último saldo acumulado de cada semana
-    resumo_saldo = df.groupby('Sem_Ref')['Acumulado_Historico'].last()
-    
-    # Unir e reindexar para as 5 semanas do horizonte
-    resumo_final = pd.merge(resumo_vendas, resumo_saldo, left_index=True, right_index=True).reset_index()
-    resumo_final.rename(columns={'Sem_Ref': 'Semana', 'Acumulado_Historico': 'Saldo_Acum'}, inplace=True)
-    
-    df_base = pd.DataFrame({'Semana': datas_semanas})
-    resumo_final = pd.merge(df_base, resumo_final, on='Semana', how='left')
-    
-    # Importante: Saldo acumulado deve persistir (ffill) e variações vazias são 0
-    resumo_final[['+', '-', 'Variacao']] = resumo_final[['+', '-', 'Variacao']].fillna(0)
-    resumo_final['Saldo_Acum'] = resumo_final['Saldo_Acum'].ffill().fillna(0)
-    
-    return resumo_final
-
-# --- EXECUÇÃO DA INTERFACE ---
 df_vis = get_render_df()
 
 if not df_vis.empty:
-    # 1. ESTILO
-    def style_negative(row):
-        return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
+    # Estilo condicional
+    def style_rows(row):
+        return ['background-color: rgba(255, 75, 75, 0.1)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
 
-    # 2. BLOCO DA TABELA PRINCIPAL
-    with st.expander("Fluxo Projetado", expanded=True):
-        lan_edit = st.data_editor(
-            df_vis.style.apply(style_negative, axis=1),
-            
-             column_config={
-            "ID": None,
-            "Tipo": None,
-            "Cartao": st.column_config.TextColumn("Cartão"), # Volta o acento apenas na etiqueta
-            "Data": st.column_config.DateColumn("Data Lanç.", format="DD/MM/YYYY"),
-            "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
-            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-            "Saldo Acumulado": st.column_config.NumberColumn("Saldo Acumulado", format="R$ %.2f")
-        },
+    with st.expander("📉 Extrato Detalhado", expanded=True):
+        main_editor = st.data_editor(
+            df_vis.style.apply(style_rows, axis=1),
+            column_config={
+                "ID": None, "Tipo": None,
+                "Data": st.column_config.DateColumn("Compra", format="DD/MM/YYYY"),
+                "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+                "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                "Saldo Acumulado": st.column_config.NumberColumn("Saldo", format="R$ %.2f")
+            },
+            disabled=df_vis.columns, num_rows="dynamic", hide_index=True, 
+            use_container_width=True, key="main_table_widget"
+        )
 
-            disabled=df_vis.columns, 
-            num_rows="dynamic",
-            hide_index=True,
-            use_container_width=True,
-            key="main_table"
-    )
+        # Exclusão na Tabela Principal
+        if st.session_state.main_table_widget["deleted_rows"]:
+            with st.spinner("Excluindo registros..."):
+                indices = st.session_state.main_table_widget["deleted_rows"]
+                for idx in indices:
+                    id_alvo = df_vis.iloc[idx]["ID"]
+                    sync_api({"action": "delete", "table": "Lançamentos", "ID": id_alvo})
+                carregar_tudo()
+                st.rerun()
 
-        # Lógica de Exclusão Múltipla Ajustada
-        if len(lan_edit) < len(df_vis):
-            ids_vivos = set(lan_edit["ID"].dropna())
-            ids_antigos = set(df_vis["ID"].dropna())
-            ids_para_deletar = list(ids_antigos - ids_vivos)
-            
-            if ids_para_deletar:
-                # Processa cada exclusão na API
-                sucesso = True
-                with st.spinner(f"Deletando {len(ids_para_deletar)} registro(s)..."):
-                    for id_alvo in ids_para_deletar:
-                        if not sync_api({"action": "delete", "table": "Lançamentos", "ID": id_alvo}):
-                            sucesso = False
-                
-                if sucesso:
-                    carregar_tudo()
-                    st.rerun()        
-    
-    # 3. BLOCO DO RESUMO SEMANAL (Compacto para Mobile)
-    df_sem = get_resumo_semanal()
-    
-    # CSS Cirúrgico para comprimir métricas e fontes
-    st.markdown("""
-        <style>
-            [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
-            [data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
-            [data-testid="stVerticalBlock"] > div { padding-top: 0rem !important; padding-bottom: 0rem !important; }
-            .stExpander { border: none !important; }
-        </style>
-    """, unsafe_allow_html=True)
-
-    with st.expander("Resumo semanal", expanded=False):
-        for _, row in df_sem.iterrows():
-            sem_inicio = row['Semana']
-            sem_fim = sem_inicio + datetime.timedelta(days=6)
-            
-            # Texto menor e em negrito para a data
-            st.markdown(f"<p style='margin-bottom: -10px; font-size: 0.9rem;'><b>{sem_inicio.strftime('%d/%m')} a {sem_fim.strftime('%d/%m')}</b></p>", unsafe_allow_html=True)
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Entradas", f"R$ {row['+']:,.2f}")
-            c2.metric("Saídas", f"R$ {row['-']:,.2f}")
-            # Card 3: Saldo Final da Semana com Delta da Variação Semanal
-            c3.metric("Saldo Acum.", f"R$ {row['Saldo_Acum']:,.2f}", delta=f"{row['Variacao']:,.2f}")
-            
-            st.markdown("<hr style='margin: 5px 0px; opacity: 0.2;'>", unsafe_allow_html=True)
-            
 else:
-    st.info("Aguardando lançamentos.")
+    st.info("Nenhum dado encontrado. Comece inserindo um lançamento acima.")
