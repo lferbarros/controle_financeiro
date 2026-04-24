@@ -167,33 +167,47 @@ with st.sidebar:
         num_rows="dynamic", hide_index=True, key="editor_cartoes"
     )
 
-    # Lógica de Sincronização Blindada para Cartões
+   # Lógica de Sincronização Ultra-Robusta para Cartões
     if len(card_editado) != len(st.session_state.df_card):
         ids_antigos = set(st.session_state.df_card["ID"].dropna())
         ids_novos = set(card_editado["ID"].dropna())
-        ids_removidos = list(ids_antigos - ids_novos)
-
-        if ids_removidos: # Exclusão
-            with st.spinner("Deletando cartão..."):
-                for id_alvo in ids_removidos:
-                    sync_api({"action": "delete", "table": "Cartoes", "ID": id_alvo})
-                    # Atualização Otimista
-                    st.session_state.df_card = st.session_state.df_card[st.session_state.df_card["ID"] != id_alvo]
         
-        elif len(card_editado) > len(st.session_state.df_card): # Inclusão
-            with st.spinner("Adicionando cartão..."):
+        # Caso 1: EXCLUSÃO
+        ids_removidos = list(ids_antigos - ids_novos)
+        if ids_removidos:
+            with st.spinner("Sincronizando exclusão com Google Sheets..."):
+                for id_alvo in ids_removidos:
+                    # Tenta atualizar a planilha primeiro
+                    sucesso = sync_api({"action": "delete", "table": "Cartoes", "ID": id_alvo})
+                    
+                    if sucesso:
+                        # Só remove do estado local se a API confirmou sucesso
+                        st.session_state.df_card = st.session_state.df_card[st.session_state.df_card["ID"] != id_alvo]
+                    else:
+                        st.error(f"Erro ao deletar ID {id_alvo} na planilha. Tente novamente.")
+                        st.stop() # Interrompe para evitar loop e inconsistência
+
+        # Caso 2: INCLUSÃO
+        elif len(card_editado) > len(st.session_state.df_card):
+            with st.spinner("Sincronizando novo cartão..."):
                 nova_linha = card_editado.iloc[-1].copy()
                 nova_linha['ID'] = str(uuid.uuid4())
-                sync_api({"action": "insert", "table": "Cartoes", **nova_linha.to_dict()})
-                # Atualização Otimista
-                st.session_state.df_card = pd.concat([st.session_state.df_card, pd.DataFrame([nova_linha])], ignore_index=True)
+                
+                sucesso = sync_api({"action": "insert", "table": "Cartoes", **nova_linha.to_dict()})
+                
+                if sucesso:
+                    st.session_state.df_card = pd.concat([st.session_state.df_card, pd.DataFrame([nova_linha])], ignore_index=True)
+                else:
+                    st.error("Erro ao inserir na planilha. Verifique a conexão.")
+                    st.stop()
 
-        # Limpa memória e previne loop infinito
-        if "editor_cartoes" in st.session_state:
-            del st.session_state["editor_cartoes"]
-            
+        # Limpeza obrigatória do estado do widget para matar o loop
+        for key in st.session_state.keys():
+            if "editor_cartoes" in key:
+                del st.session_state[key]
+        
         st.rerun()
-    
+      
 # =========================================================
 # 5. ÁREA PRINCIPAL
 # =========================================================
