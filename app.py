@@ -323,7 +323,7 @@ if not df_vis.empty:
         </style>
     """, unsafe_allow_html=True)
 
-    with st.expander("📊 Resumo por Período", expanded=True):
+    with st.expander("Resumo semanal", expanded=False):
         for _, row in df_sem.iterrows():
             sem_inicio = row['Semana']
             sem_fim = sem_inicio + datetime.timedelta(days=6)
