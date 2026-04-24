@@ -5,10 +5,11 @@ import uuid
 import requests
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="Gestor Financeiro PRO", layout="wide")
+# Configuração da página para melhor visualização em mobile e desktop
+st.set_page_config(page_title="Gestor Financeiro PRO", layout="wide", initial_sidebar_state="collapsed")
 
 # =========================================================
-# 1. GERENCIAMENTO DE CONEXÃO
+# 1. ACESSO E CONEXÃO
 # =========================================================
 if "url_base" not in st.session_state:
     st.session_state.url_base = ""
@@ -20,34 +21,31 @@ def logout():
 if not st.session_state.url_base:
     st.title("🚀 Gestor Financeiro")
     url_input = st.text_input("Insira sua URL do Google Apps Script:", type="password")
-    if st.button("Conectar Sistema"):
+    if st.button("Conectar Sistema", use_container_width=True):
         if "script.google.com" in url_input:
             st.session_state.url_base = url_input
             st.rerun()
         else:
-            st.error("URL inválida. Certifique-se de usar o link de 'Execução Web'.")
+            st.error("URL inválida.")
     st.stop()
 
 URL_SCRIPT = st.session_state.url_base
 
 # =========================================================
-# 2. MOTOR DE SINCRONIZAÇÃO (ROBUSTEZ TOTAL)
+# 2. MOTOR DE SINCRONIZAÇÃO (ANTI-LOOP)
 # =========================================================
 def sync_api(payload):
-    """Envia dados para o Google Sheets e valida o sucesso."""
     try:
-        # Padronização de nomes de colunas para o Google Sheets
-        if "Cartao" in payload: payload["Cartão"] = payload.pop("Cartao")
-        if "Data" in payload: payload["Data Lanc."] = payload.pop("Data")
+        # Padronização de nomes (Removendo acentos para o back-end)
+        payload["table"] = payload["table"].replace("ç", "c").replace("õ", "o").replace("ã", "a")
+        if "Cartao" in payload: payload["Cartao"] = payload.pop("Cartao")
         
-        response = requests.post(URL_SCRIPT, json=payload, timeout=15)
-        return response.status_code == 200
-    except Exception as e:
-        st.error(f"Falha na comunicação: {e}")
+        res = requests.post(URL_SCRIPT, json=payload, timeout=15)
+        return res.status_code == 200 and "error" not in res.text.lower()
+    except:
         return False
 
 def carregar_tudo():
-    """Recarrega todas as abas da planilha para o estado local."""
     try:
         res = requests.get(URL_SCRIPT, timeout=15).json()
         
@@ -59,7 +57,6 @@ def carregar_tudo():
 
         # Cartões
         df_card = pd.DataFrame(res.get('cartoes', []))
-        # Normaliza nome da coluna vindo da planilha
         if "Cartão" in df_card.columns: df_card = df_card.rename(columns={"Cartão": "Cartao"})
         for c in ["Cartao", "Vencimento", "Fechamento", "ID"]:
             if c not in df_card.columns: df_card[c] = None
@@ -67,24 +64,21 @@ def carregar_tudo():
 
         # Lançamentos
         df_lan = pd.DataFrame(res.get('lancamentos', []))
-        mapeamento = {"Data Lanc.": "Data", "Cartão": "Cartao"}
-        df_lan = df_lan.rename(columns=mapeamento)
+        # Mapeia colunas da planilha para o código
+        df_lan = df_lan.rename(columns={"Data Lanc.": "Data", "Cartão": "Cartao"})
         for c in ["Data", "Categoria", "Cartao", "Valor", "Data_Efetiva", "Tipo", "ID"]:
             if c not in df_lan.columns: df_lan[c] = None
         st.session_state.df_lan = df_lan
         
         st.session_state.last_sync = datetime.datetime.now()
-        return True
     except Exception as e:
-        st.error(f"Erro ao baixar dados: {e}")
-        return False
+        st.error(f"Erro ao carregar dados: {e}")
 
-# Inicialização única
 if 'df_lan' not in st.session_state:
     carregar_tudo()
 
 # =========================================================
-# 3. CÁLCULOS E LÓGICA
+# 3. LÓGICA DE NEGÓCIO (VENCIMENTOS)
 # =========================================================
 def calcular_vencimento(data_o, cartao_n):
     if cartao_n == "Não" or st.session_state.df_card.empty: return data_o
@@ -98,161 +92,187 @@ def calcular_vencimento(data_o, cartao_n):
         return data_o + relativedelta(months=1)
 
 # =========================================================
-# 4. SIDEBAR - CONFIGURAÇÕES (EDITORES ROBUSTOS)
+# 4. SIDEBAR - CONFIGURAÇÕES
 # =========================================================
 with st.sidebar:
     st.title("⚙️ Configurações")
-    if st.button("🔄 Forçar Atualização"): 
+    if st.button("🔄 Sincronizar Agora"): 
         carregar_tudo()
         st.rerun()
-    if st.button("🚪 Sair do Sistema"): logout()
+    if st.button("🚪 Sair"): logout()
     st.divider()
 
-    # --- CATEGORIAS ---
+    # Categorias
     st.subheader("Categorias")
-    editor_cat = st.data_editor(
+    edit_cat = st.data_editor(
         st.session_state.df_cat,
-        column_config={
-            "ID": None, "id": None,
-            "Tipo": st.column_config.SelectboxColumn("Sinal", options=["+", "-"], required=True)
-        },
-        num_rows="dynamic", hide_index=True, key="edit_cat_widget"
+        column_config={"ID": None, "Tipo": st.column_config.SelectboxColumn("Sinal", options=["+", "-"], required=True)},
+        num_rows="dynamic", hide_index=True, key="widget_cat"
     )
-
-    # Detecção de mudança por estado (Mais estável que comparar len)
-    if st.session_state.edit_cat_widget["edited_rows"] or \
-       st.session_state.edit_cat_widget["added_rows"] or \
-       st.session_state.edit_cat_widget["deleted_rows"]:
-        
-        changes = st.session_state.edit_cat_widget
-        sucesso_total = True
-        
-        with st.spinner("Sincronizando..."):
-            # Deletar
-            for idx in changes["deleted_rows"]:
-                id_alvo = st.session_state.df_cat.iloc[idx]["ID"]
-                if not sync_api({"action": "delete", "table": "Categorias", "ID": id_alvo}): sucesso_total = False
-            # Adicionar
-            for row in changes["added_rows"]:
+    # Lógica Atômica Categorias
+    if st.session_state.widget_cat["added_rows"] or st.session_state.widget_cat["deleted_rows"]:
+        with st.spinner("Atualizando..."):
+            for row in st.session_state.widget_cat["added_rows"]:
                 row["ID"] = str(uuid.uuid4())
-                if not sync_api({"action": "insert", "table": "Categorias", **row}): sucesso_total = False
-            
-            if sucesso_total:
-                carregar_tudo()
-                st.rerun()
+                sync_api({"action": "insert", "table": "Categorias", **row})
+            for idx in st.session_state.widget_cat["deleted_rows"]:
+                id_a = st.session_state.df_cat.iloc[idx]["ID"]
+                sync_api({"action": "delete", "table": "Categorias", "ID": id_a})
+            carregar_tudo()
+            st.rerun()
 
     st.divider()
 
-    # --- CARTÕES ---
+    # Cartões
     st.subheader("Cartões")
-    editor_card = st.data_editor(
+    edit_card = st.data_editor(
         st.session_state.df_card,
-        column_config={
-            "ID": None, "id": None,
-            "Cartao": st.column_config.TextColumn("Nome Cartão", required=True),
-            "Vencimento": st.column_config.NumberColumn("Dia Venc.", min_value=1, max_value=31),
-            "Fechamento": st.column_config.NumberColumn("Dia Fech.", min_value=1, max_value=31)
-        },
-        num_rows="dynamic", hide_index=True, key="edit_card_widget"
+        column_config={"ID": None, "Cartao": "Nome", "Vencimento": "Venc (dia)", "Fechamento": "Fech (dia)"},
+        num_rows="dynamic", hide_index=True, key="widget_card"
     )
-
-    if st.session_state.edit_card_widget["edited_rows"] or \
-       st.session_state.edit_card_widget["added_rows"] or \
-       st.session_state.edit_card_widget["deleted_rows"]:
-        
-        changes = st.session_state.edit_card_widget
-        sucesso_total = True
-        
-        with st.spinner("Sincronizando Cartões..."):
-            for idx in changes["deleted_rows"]:
-                id_alvo = st.session_state.df_card.iloc[idx]["ID"]
-                if not sync_api({"action": "delete", "table": "Cartoes", "ID": id_alvo}): sucesso_total = False
-            for row in changes["added_rows"]:
+    # Lógica Atômica Cartões
+    if st.session_state.widget_card["added_rows"] or st.session_state.widget_card["deleted_rows"]:
+        with st.spinner("Atualizando..."):
+            for row in st.session_state.widget_card["added_rows"]:
                 row["ID"] = str(uuid.uuid4())
-                if not sync_api({"action": "insert", "table": "Cartoes", **row}): sucesso_total = False
-            
-            if sucesso_total:
-                carregar_tudo()
-                st.rerun()
+                sync_api({"action": "insert", "table": "Cartoes", **row})
+            for idx in st.session_state.widget_card["deleted_rows"]:
+                id_a = st.session_state.df_card.iloc[idx]["ID"]
+                sync_api({"action": "delete", "table": "Cartoes", "ID": id_a})
+            carregar_tudo()
+            st.rerun()
 
 # =========================================================
-# 5. ÁREA PRINCIPAL - LANÇAMENTOS
+# 5. INTERFACE PRINCIPAL
 # =========================================================
-st.title("💰 Fluxo de Caixa Projetado")
+st.title("💰 Fluxo de Caixa")
 
-with st.expander("➕ Novo Lançamento", expanded=False):
-    c1, c2, c3, c4 = st.columns(4)
-    data_l = c1.date_input("Data Compra", format="DD/MM/YYYY")
+# FORMULÁRIO DE LANÇAMENTO
+with st.expander("➕ Incluir Novo Lançamento", expanded=False):
+    c1, c2, c3, c4 = st.columns([2,2,2,1])
+    data_compra = c1.date_input("Data Compra", format="DD/MM/YYYY")
     
-    cats = st.session_state.df_cat["Categoria"].dropna().tolist()
-    cat_sel = c2.selectbox("Categoria", cats if cats else ["Cadastre uma categoria"])
+    lista_cat = st.session_state.df_cat["Categoria"].dropna().tolist()
+    cat_sel = c2.selectbox("Categoria", lista_cat if lista_cat else ["Nenhuma"])
     
-    cards = ["Não"] + st.session_state.df_card["Cartao"].dropna().tolist()
-    card_sel = c3.selectbox("Cartão", cards)
+    lista_card = ["Não"] + st.session_state.df_card["Cartao"].dropna().tolist()
+    card_sel = c3.selectbox("Cartão", lista_card)
     
-    valor_l = c4.number_input("Valor R$", min_value=0.0, step=10.0, format="%.2f")
+    valor = c4.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
 
-    if st.button("Salvar Lançamento", use_container_width=True, type="primary"):
-        if not cats:
-            st.warning("Adicione categorias na barra lateral primeiro.")
+    if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
+        if not lista_cat:
+            st.error("Cadastre uma categoria primeiro.")
         else:
             sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_sel, "Tipo"].values[0]
-            dt_efetiva = calcular_vencimento(data_l, card_sel)
-            
+            dt_efetiva = calcular_vencimento(data_compra, card_sel)
             payload = {
-                "action": "insert", "table": "Lançamentos", "ID": str(uuid.uuid4()),
-                "Data": data_l.isoformat(), "Categoria": cat_sel, "Cartao": card_sel,
-                "Tipo": sinal, "Valor": float(valor_l), "Data_Efetiva": dt_efetiva.isoformat()
+                "action": "insert", "table": "Lancamentos", "ID": str(uuid.uuid4()),
+                "Data": data_compra.isoformat(), "Categoria": cat_sel, "Cartao": card_sel,
+                "Tipo": sinal, "Valor": float(valor), "Data_Efetiva": dt_efetiva.isoformat()
             }
-            
             if sync_api(payload):
-                st.toast("Sucesso!")
+                st.toast("Lançamento salvo!")
                 carregar_tudo()
                 st.rerun()
 
 # =========================================================
-# 6. PROCESSAMENTO E EXIBIÇÃO
+# 6. PROCESSAMENTO DOS DADOS (TABELAS E RESUMOS)
 # =========================================================
-def get_render_df():
+def get_df_render():
     if st.session_state.df_lan.empty: return pd.DataFrame()
     df = st.session_state.df_lan.copy()
     df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce').dt.date
     df = df.dropna(subset=["Data_Efetiva"]).sort_values("Data_Efetiva")
     df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
     sinais = df['Tipo'].apply(lambda x: 1 if str(x).strip() == "+" else -1)
-    df['Saldo Acumulado'] = (df['Valor'] * sinais).cumsum()
+    df['Saldo_Acumulado'] = (df['Valor'] * sinais).cumsum()
     return df
 
-df_vis = get_render_df()
+def get_resumo_semanal():
+    df = st.session_state.df_lan.copy()
+    hoje = datetime.date.today()
+    segunda_atual = hoje - datetime.timedelta(days=hoje.weekday())
+    datas_semanas = [segunda_atual + datetime.timedelta(weeks=i) for i in range(5)]
+    
+    if df.empty:
+        return pd.DataFrame({'Semana': datas_semanas, '+': 0.0, '-': 0.0, 'Var': 0.0, 'Acum': 0.0})
 
-if not df_vis.empty:
-    # Estilo condicional
-    def style_rows(row):
-        return ['background-color: rgba(255, 75, 75, 0.1)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
+    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce').dt.date
+    df = df.dropna(subset=["Data_Efetiva"]).sort_values("Data_Efetiva")
+    
+    # Cálculo histórico de saldo
+    sinais = df['Tipo'].apply(lambda x: 1 if str(x).strip() == "+" else -1)
+    df['Acum_Historico'] = (df['Valor'] * sinais).cumsum()
+    df['Sem_Ref'] = df['Data_Efetiva'].apply(lambda x: x - datetime.timedelta(days=x.weekday()))
+    
+    resumo_v = df.groupby(['Sem_Ref', 'Tipo'])['Valor'].sum().unstack(fill_value=0)
+    if '+' not in resumo_v.columns: resumo_v['+'] = 0.0
+    if '-' not in resumo_v.columns: resumo_v['-'] = 0.0
+    resumo_v['Var'] = resumo_v['+'] - resumo_v['-']
+    
+    resumo_s = df.groupby('Sem_Ref')['Acum_Historico'].last()
+    resumo_final = pd.merge(resumo_v, resumo_s, left_index=True, right_index=True).reset_index()
+    resumo_final.rename(columns={'Sem_Ref': 'Semana', 'Acum_Historico': 'Acum'}, inplace=True)
+    
+    df_base = pd.DataFrame({'Semana': datas_semanas})
+    resumo_final = pd.merge(df_base, resumo_final, on='Semana', how='left')
+    resumo_final[['+', '-', 'Var']] = resumo_final[['+', '-', 'Var']].fillna(0)
+    resumo_final['Acum'] = resumo_final['Acum'].ffill().fillna(0)
+    
+    return resumo_final
 
-    with st.expander("📉 Extrato Detalhado", expanded=True):
-        main_editor = st.data_editor(
-            df_vis.style.apply(style_rows, axis=1),
+# --- EXIBIÇÃO ---
+df_render = get_df_render()
+
+# Estilo Mobile
+st.markdown("""
+    <style>
+        [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
+        [data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
+        .stExpander { border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; margin-bottom: 10px; }
+        hr { margin: 10px 0 !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+if not df_render.empty:
+    # 1. TABELA PRINCIPAL
+    with st.expander("📉 Extrato Projetado", expanded=True):
+        def color_negative(row):
+            return ['background-color: rgba(255, 75, 75, 0.1)' if row['Saldo_Acumulado'] < 0 else '' for _ in row]
+        
+        main_edit = st.data_editor(
+            df_render.style.apply(color_negative, axis=1),
             column_config={
                 "ID": None, "Tipo": None,
-                "Data": st.column_config.DateColumn("Compra", format="DD/MM/YYYY"),
-                "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+                "Data": st.column_config.DateColumn("Compra", format="DD/MM"),
+                "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YY"),
                 "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                "Saldo Acumulado": st.column_config.NumberColumn("Saldo", format="R$ %.2f")
+                "Saldo_Acumulado": st.column_config.NumberColumn("Saldo", format="R$ %.2f")
             },
-            disabled=df_vis.columns, num_rows="dynamic", hide_index=True, 
-            use_container_width=True, key="main_table_widget"
+            disabled=df_render.columns, num_rows="dynamic", hide_index=True, 
+            use_container_width=True, key="widget_main"
         )
+        
+        if st.session_state.widget_main["deleted_rows"]:
+            for idx in st.session_state.widget_main["deleted_rows"]:
+                id_a = df_render.iloc[idx]["ID"]
+                sync_api({"action": "delete", "table": "Lancamentos", "ID": id_a})
+            carregar_tudo()
+            st.rerun()
 
-        # Exclusão na Tabela Principal
-        if st.session_state.main_table_widget["deleted_rows"]:
-            with st.spinner("Excluindo registros..."):
-                indices = st.session_state.main_table_widget["deleted_rows"]
-                for idx in indices:
-                    id_alvo = df_vis.iloc[idx]["ID"]
-                    sync_api({"action": "delete", "table": "Lançamentos", "ID": id_alvo})
-                carregar_tudo()
-                st.rerun()
-
+    # 2. RESUMO SEMANAL (MOBILE FRIENDLY)
+    st.subheader("🗓️ Resumo 5 Semanas")
+    df_s = get_resumo_semanal()
+    
+    for _, row in df_s.iterrows():
+        with st.container():
+            fim = row['Semana'] + datetime.timedelta(days=6)
+            st.markdown(f"**Semana: {row['Semana'].strftime('%d/%m')} a {fim.strftime('%d/%m')}**")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Entradas", f"R${row['+']:,.2f}")
+            col2.metric("Saídas", f"R${row['-']:,.2f}")
+            col3.metric("Saldo", f"R${row['Acum']:,.2f}", delta=f"{row['Var']:,.2f}")
+            st.markdown("---")
 else:
-    st.info("Nenhum dado encontrado. Comece inserindo um lançamento acima.")
+    st.info("Nenhum lançamento encontrado.")
