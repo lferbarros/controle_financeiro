@@ -301,15 +301,24 @@ if not df_vis.empty:
             key="main_table"
     )
 
-        # Lógica de Exclusão
+        # Lógica de Exclusão Múltipla Ajustada
         if len(lan_edit) < len(df_vis):
             ids_vivos = set(lan_edit["ID"].dropna())
             ids_antigos = set(df_vis["ID"].dropna())
-            id_morto = list(ids_antigos - ids_vivos)
-            if id_morto and sync_api({"action": "delete", "table": "Lançamentos", "ID": id_morto[0]}):
-                carregar_tudo()
-                st.rerun()
-
+            ids_para_deletar = list(ids_antigos - ids_vivos)
+            
+            if ids_para_deletar:
+                # Processa cada exclusão na API
+                sucesso = True
+                with st.spinner(f"Deletando {len(ids_para_deletar)} registro(s)..."):
+                    for id_alvo in ids_para_deletar:
+                        if not sync_api({"action": "delete", "table": "Lançamentos", "ID": id_alvo}):
+                            sucesso = False
+                
+                if sucesso:
+                    carregar_tudo()
+                    st.rerun()        
+    
     # 3. BLOCO DO RESUMO SEMANAL (Compacto para Mobile)
     df_sem = get_resumo_semanal()
     
