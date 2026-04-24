@@ -228,17 +228,36 @@ def get_render_df():
 
 def get_resumo_semanal():
     df = st.session_state.df_lan.copy()
-    if df.empty: return pd.DataFrame()
-    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce')
+    
+    # 1. Definir o horizonte: Segunda desta semana até 4 semanas depois
+    hoje = datetime.date.today()
+    segunda_atual = hoje - datetime.timedelta(days=hoje.weekday())
+    datas_semanas = [segunda_atual + datetime.timedelta(weeks=i) for i in range(5)]
+    
+    if df.empty:
+        # Se não há dados, retorna estrutura vazia com as 5 semanas zeradas
+        return pd.DataFrame({'Semana': datas_semanas, '+': 0.0, '-': 0.0, 'Saldo': 0.0})
+
+    # 2. Processar dados existentes
+    df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce').dt.date
     df = df.dropna(subset=["Data_Efetiva"])
     df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
-    # Agrupa por semana (começando na segunda-feira)
-    df['Semana'] = df['Data_Efetiva'].dt.to_period('W-SUN').apply(lambda r: r.start_time)
+    
+    # Criar coluna da semana (segunda-feira correspondente)
+    df['Semana'] = df['Data_Efetiva'].apply(lambda x: x - datetime.timedelta(days=x.weekday()))
+    
+    # 3. Agrupar e garantir as 5 semanas no resultado
     resumo = df.groupby(['Semana', 'Tipo'])['Valor'].sum().unstack(fill_value=0)
     if '+' not in resumo.columns: resumo['+'] = 0.0
     if '-' not in resumo.columns: resumo['-'] = 0.0
     resumo['Saldo'] = resumo['+'] - resumo['-']
-    return resumo.reset_index().sort_values("Semana")
+    resumo = resumo.reset_index()
+    
+    # Criar DataFrame base com as 5 semanas e mesclar com os dados reais
+    df_base = pd.DataFrame({'Semana': datas_semanas})
+    resumo_final = pd.merge(df_base, resumo, on='Semana', how='left').fillna(0)
+    
+    return resumo_final.sort_values("Semana")
 
 # --- EXECUÇÃO DA INTERFACE ---
 df_vis = get_render_df()
@@ -279,20 +298,22 @@ if not df_vis.empty:
                 carregar_tudo()
                 st.rerun()
 
-    # 3. BLOCO DO RESUMO SEMANAL (Dentro do 'if' para garantir que há dados)
+    # 3. BLOCO DO RESUMO SEMANAL (Horizonte 5 Semanas)
     df_sem = get_resumo_semanal()
-    with st.expander("📊 Resumo Semanal (Fluxo de Caixa)", expanded=True):
-        if not df_sem.empty:
-            ultima = df_sem.iloc[-1]
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Entradas (Semana)", f"R$ {ultima['+']:,.2f}")
-            c2.metric("Saídas (Semana)", f"R$ {ultima['-']:,.2f}", delta_color="inverse")
-            c3.metric("Saldo Semanal", f"R$ {ultima['Saldo']:,.2f}")
+    with st.expander("📊 Resumo por Período (Atual + 4 Semanas)", expanded=True):
+        for _, row in df_sem.iterrows():
+            sem_inicio = row['Semana']
+            sem_fim = sem_inicio + datetime.timedelta(days=6)
             
+            # Formatação da legenda da semana
+            st.write(f"**Semana: {sem_inicio.strftime('%d/%m')} a {sem_fim.strftime('%d/%m')}**")
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Entradas", f"R$ {row['+']:,.2f}")
+            c2.metric("Saídas", f"R$ {row['-']:,.2f}", delta_color="inverse")
+            # O delta do saldo aqui mostra se a semana em si é positiva ou negativa
+            c3.metric("Saldo Semanal", f"R$ {row['Saldo']:,.2f}", delta=f"{row['Saldo']:,.2f}")
             st.divider()
-            st.write("**Histórico de Fluxo**")
-            df_chart = df_sem.melt(id_vars='Semana', value_vars=['+', '-'], var_name='Fluxo', value_name='Valor')
-            df_chart['Fluxo'] = df_chart['Fluxo'].map({'+': 'Entradas', '-': 'Saídas'})
-            st.bar_chart(df_chart, x="Semana", y="Valor", color="Fluxo", stack=False)
-else:
+    
+    else:
     st.info("Aguardando lançamentos.")
