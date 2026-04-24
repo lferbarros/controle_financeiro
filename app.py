@@ -122,19 +122,31 @@ with st.sidebar:
 
     # Lógica de Sincronização Blindada para Categorias
     if len(cat_editada) != len(st.session_state.df_cat):
-        if len(cat_editada) > len(st.session_state.df_cat): # Inclusão
-            nova_linha = cat_editada.iloc[-1].copy()
-            nova_linha['ID'] = str(uuid.uuid4())
-            sync_api({"action": "insert", "table": "Categorias", **nova_linha.to_dict()})
-        else: # Exclusão
-            ids_antigos = set(st.session_state.df_cat["ID"].dropna())
-            ids_novos = set(cat_editada["ID"].dropna())
-            id_removido = list(ids_antigos - ids_novos)
-            if id_removido:
-                sync_api({"action": "delete", "table": "Categorias", "ID": id_removido[0]})
-        carregar_tudo()
-        st.rerun()
+        ids_antigos = set(st.session_state.df_cat["ID"].dropna())
+        ids_novos = set(cat_editada["ID"].dropna())
+        ids_removidos = list(ids_antigos - ids_novos)
 
+        if ids_removidos: # Exclusão
+            with st.spinner("Deletando categoria..."):
+                for id_alvo in ids_removidos:
+                    sync_api({"action": "delete", "table": "Categorias", "ID": id_alvo})
+                    # Atualização Otimista: remove do estado local na hora
+                    st.session_state.df_cat = st.session_state.df_cat[st.session_state.df_cat["ID"] != id_alvo]
+        
+        elif len(cat_editada) > len(st.session_state.df_cat): # Inclusão
+            with st.spinner("Adicionando categoria..."):
+                nova_linha = cat_editada.iloc[-1].copy()
+                nova_linha['ID'] = str(uuid.uuid4())
+                sync_api({"action": "insert", "table": "Categorias", **nova_linha.to_dict()})
+                # Atualização Otimista: adiciona no estado local na hora
+                st.session_state.df_cat = pd.concat([st.session_state.df_cat, pd.DataFrame([nova_linha])], ignore_index=True)
+
+        # A "bala de prata" contra o loop: limpa a memória temporária do widget
+        if "editor_categorias" in st.session_state:
+            del st.session_state["editor_categorias"]
+            
+        st.rerun() # Reinicia a interface com os dados já atualizados
+      
     st.divider()
 
     # --- TABELA CARTÕES (COM DIAS 1-31) ---
@@ -157,19 +169,31 @@ with st.sidebar:
 
     # Lógica de Sincronização Blindada para Cartões
     if len(card_editado) != len(st.session_state.df_card):
-        if len(card_editado) > len(st.session_state.df_card): # Inclusão
-            nova_linha = card_editado.iloc[-1].copy()
-            nova_linha['ID'] = str(uuid.uuid4())
-            sync_api({"action": "insert", "table": "Cartoes", **nova_linha.to_dict()})
-        else: # Exclusão
-            ids_antigos = set(st.session_state.df_card["ID"].dropna())
-            ids_novos = set(card_editado["ID"].dropna())
-            id_removido = list(ids_antigos - ids_novos)
-            if id_removido:
-                sync_api({"action": "delete", "table": "Cartoes", "ID": id_removido[0]})
-        carregar_tudo()
-        st.rerun()
+        ids_antigos = set(st.session_state.df_card["ID"].dropna())
+        ids_novos = set(card_editado["ID"].dropna())
+        ids_removidos = list(ids_antigos - ids_novos)
 
+        if ids_removidos: # Exclusão
+            with st.spinner("Deletando cartão..."):
+                for id_alvo in ids_removidos:
+                    sync_api({"action": "delete", "table": "Cartoes", "ID": id_alvo})
+                    # Atualização Otimista
+                    st.session_state.df_card = st.session_state.df_card[st.session_state.df_card["ID"] != id_alvo]
+        
+        elif len(card_editado) > len(st.session_state.df_card): # Inclusão
+            with st.spinner("Adicionando cartão..."):
+                nova_linha = card_editado.iloc[-1].copy()
+                nova_linha['ID'] = str(uuid.uuid4())
+                sync_api({"action": "insert", "table": "Cartoes", **nova_linha.to_dict()})
+                # Atualização Otimista
+                st.session_state.df_card = pd.concat([st.session_state.df_card, pd.DataFrame([nova_linha])], ignore_index=True)
+
+        # Limpa memória e previne loop infinito
+        if "editor_cartoes" in st.session_state:
+            del st.session_state["editor_cartoes"]
+            
+        st.rerun()
+    
 # =========================================================
 # 5. ÁREA PRINCIPAL
 # =========================================================
