@@ -176,7 +176,7 @@ with st.sidebar:
 st.title("Gestor Financeiro")
 
 # --- Trecho do Formulário de Lançamento ---
-with st.expander("Incluir Lançamento", expanded=True):
+with st.expander("Incluir Lançamento", expanded=False):
     col1, col2, col3, col4 = st.columns(4)
     with col1: data_o = st.date_input("Data Lanç.", format="DD/MM/YYYY") # d_o -> data_o
     with col2:
@@ -228,9 +228,10 @@ if not df_vis.empty:
     def style_negative(row):
         return ['background-color: rgba(255, 75, 75, 0.15)' if row['Saldo Acumulado'] < 0 else '' for _ in row]
 
-    st.subheader("Fluxo Projetado")
-    lan_edit = st.data_editor(
-        df_vis.style.apply(style_negative, axis=1),
+   # Substituímos o subheader pelo expander
+    with st.expander("Fluxo Projetado", expanded=True):
+        lan_edit = st.data_editor(
+            df_vis.style.apply(style_negative, axis=1),
         column_config={
             "ID": None,
             "Tipo": None,
