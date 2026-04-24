@@ -229,35 +229,47 @@ def get_render_df():
 def get_resumo_semanal():
     df = st.session_state.df_lan.copy()
     
-    # 1. Definir o horizonte: Segunda desta semana até 4 semanas depois
+    # 1. Horizonte de 5 semanas
     hoje = datetime.date.today()
     segunda_atual = hoje - datetime.timedelta(days=hoje.weekday())
     datas_semanas = [segunda_atual + datetime.timedelta(weeks=i) for i in range(5)]
     
+    # 2. Preparação de dados (Histórico Completo)
     if df.empty:
-        # Se não há dados, retorna estrutura vazia com as 5 semanas zeradas
-        return pd.DataFrame({'Semana': datas_semanas, '+': 0.0, '-': 0.0, 'Saldo': 0.0})
+        return pd.DataFrame({'Semana': datas_semanas, '+': 0.0, '-': 0.0, 'Variacao': 0.0, 'Saldo_Acum': 0.0})
 
-    # 2. Processar dados existentes
     df["Data_Efetiva"] = pd.to_datetime(df["Data_Efetiva"], errors='coerce').dt.date
-    df = df.dropna(subset=["Data_Efetiva"])
+    df = df.dropna(subset=["Data_Efetiva"]).sort_values("Data_Efetiva")
     df["Valor"] = pd.to_numeric(df["Valor"], errors='coerce').fillna(0)
     
-    # Criar coluna da semana (segunda-feira correspondente)
-    df['Semana'] = df['Data_Efetiva'].apply(lambda x: x - datetime.timedelta(days=x.weekday()))
+    # Cálculo do saldo acumulado linha a linha no tempo
+    sinais = df['Tipo'].apply(lambda x: 1 if str(x).strip() == "+" else -1)
+    df['Acumulado_Historico'] = (df['Valor'] * sinais).cumsum()
     
-    # 3. Agrupar e garantir as 5 semanas no resultado
-    resumo = df.groupby(['Semana', 'Tipo'])['Valor'].sum().unstack(fill_value=0)
-    if '+' not in resumo.columns: resumo['+'] = 0.0
-    if '-' not in resumo.columns: resumo['-'] = 0.0
-    resumo['Saldo'] = resumo['+'] - resumo['-']
-    resumo = resumo.reset_index()
+    # Identificar a semana de cada lançamento
+    df['Sem_Ref'] = df['Data_Efetiva'].apply(lambda x: x - datetime.timedelta(days=x.weekday()))
     
-    # Criar DataFrame base com as 5 semanas e mesclar com os dados reais
+    # Agrupar variações semanais (Entradas e Saídas)
+    resumo_vendas = df.groupby(['Sem_Ref', 'Tipo'])['Valor'].sum().unstack(fill_value=0)
+    if '+' not in resumo_vendas.columns: resumo_vendas['+'] = 0.0
+    if '-' not in resumo_vendas.columns: resumo_vendas['-'] = 0.0
+    resumo_vendas['Variacao'] = resumo_vendas['+'] - resumo_vendas['-']
+    
+    # Pegar o último saldo acumulado de cada semana
+    resumo_saldo = df.groupby('Sem_Ref')['Acumulado_Historico'].last()
+    
+    # Unir e reindexar para as 5 semanas do horizonte
+    resumo_final = pd.merge(resumo_vendas, resumo_saldo, left_index=True, right_index=True).reset_index()
+    resumo_final.rename(columns={'Sem_Ref': 'Semana', 'Acumulado_Historico': 'Saldo_Acum'}, inplace=True)
+    
     df_base = pd.DataFrame({'Semana': datas_semanas})
-    resumo_final = pd.merge(df_base, resumo, on='Semana', how='left').fillna(0)
+    resumo_final = pd.merge(df_base, resumo_final, on='Semana', how='left')
     
-    return resumo_final.sort_values("Semana")
+    # Importante: Saldo acumulado deve persistir (ffill) e variações vazias são 0
+    resumo_final[['+', '-', 'Variacao']] = resumo_final[['+', '-', 'Variacao']].fillna(0)
+    resumo_final['Saldo_Acum'] = resumo_final['Saldo_Acum'].ffill().fillna(0)
+    
+    return resumo_final
 
 # --- EXECUÇÃO DA INTERFACE ---
 df_vis = get_render_df()
@@ -298,22 +310,34 @@ if not df_vis.empty:
                 carregar_tudo()
                 st.rerun()
 
-    # 3. BLOCO DO RESUMO SEMANAL (Horizonte 5 Semanas)
+    # 3. BLOCO DO RESUMO SEMANAL (Compacto para Mobile)
     df_sem = get_resumo_semanal()
-    with st.expander("Resumo semanal", expanded=False):
+    
+    # CSS Cirúrgico para comprimir métricas e fontes
+    st.markdown("""
+        <style>
+            [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+            [data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
+            [data-testid="stVerticalBlock"] > div { padding-top: 0rem !important; padding-bottom: 0rem !important; }
+            .stExpander { border: none !important; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    with st.expander("📊 Resumo por Período", expanded=True):
         for _, row in df_sem.iterrows():
             sem_inicio = row['Semana']
             sem_fim = sem_inicio + datetime.timedelta(days=6)
             
-            # Formatação da legenda da semana
-            st.write(f"**Semana: {sem_inicio.strftime('%d/%m')} a {sem_fim.strftime('%d/%m')}**")
+            # Texto menor e em negrito para a data
+            st.markdown(f"<p style='margin-bottom: -10px; font-size: 0.9rem;'><b>{sem_inicio.strftime('%d/%m')} a {sem_fim.strftime('%d/%m')}</b></p>", unsafe_allow_html=True)
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Entradas", f"R$ {row['+']:,.2f}")
-            c2.metric("Saídas", f"R$ {row['-']:,.2f}", delta_color="inverse")
-            # O delta do saldo aqui mostra se a semana em si é positiva ou negativa
-            c3.metric("Saldo Semanal", f"R$ {row['Saldo']:,.2f}", delta=f"{row['Saldo']:,.2f}")
-            st.divider()
-    
+            c2.metric("Saídas", f"R$ {row['-']:,.2f}")
+            # Card 3: Saldo Final da Semana com Delta da Variação Semanal
+            c3.metric("Saldo Acum.", f"R$ {row['Saldo_Acum']:,.2f}", delta=f"{row['Variacao']:,.2f}")
+            
+            st.markdown("<hr style='margin: 5px 0px; opacity: 0.2;'>", unsafe_allow_html=True)
+            
 else:
     st.info("Aguardando lançamentos.")
