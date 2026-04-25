@@ -92,7 +92,9 @@ def calcular_vencimento(data_o, cartao_n):
         return data_o + relativedelta(months=1)
 
 # =========================================================
-# 4. SIDEBAR - CONFIGURAÇÕES
+
+# =========================================================
+# 4. SIDEBAR - CONFIGURAÇÕES (VERSÃO BLOQUEADA PARA EDIÇÃO)
 # =========================================================
 with st.sidebar:
     st.title("⚙️ Configurações")
@@ -102,19 +104,36 @@ with st.sidebar:
     if st.button("🚪 Sair"): logout()
     st.divider()
 
-    # Categorias
+    # --- SEÇÃO: CATEGORIAS ---
     st.subheader("Categorias")
+    
+    # Formulário de Inclusão (Seguindo o padrão da tabela principal)
+    with st.expander("🆕 Nova Categoria", expanded=False):
+        new_cat = st.text_input("Nome da Categoria", key="input_new_cat")
+        new_tipo = st.selectbox("Sinal", ["-", "+"], key="input_new_tipo")
+        if st.button("Adicionar", key="btn_add_cat", use_container_width=True):
+            if new_cat:
+                payload = {
+                    "action": "insert", "table": "Categorias", 
+                    "Categoria": new_cat, "Tipo": new_tipo, "ID": str(uuid.uuid4())
+                }
+                if sync_api(payload):
+                    st.toast("Categoria adicionada!")
+                    carregar_tudo()
+                    st.rerun()
+
+    # Tabela de Visualização e Exclusão (Bloqueada para edição)
     edit_cat = st.data_editor(
         st.session_state.df_cat,
-        column_config={"ID": None, "Tipo": st.column_config.SelectboxColumn("Sinal", options=["+", "-"], required=True)},
-        num_rows="dynamic", hide_index=True, key="widget_cat"
+        column_config={"ID": None, "Tipo": "Sinal"},
+        num_rows="dynamic", 
+        hide_index=True, 
+        disabled=["Categoria", "Tipo", "ID"], # Bloqueio cirúrgico de edição
+        key="widget_cat"
     )
-    # Lógica Atômica Categorias
-    if st.session_state.widget_cat["added_rows"] or st.session_state.widget_cat["deleted_rows"]:
-        with st.spinner("Atualizando..."):
-            for row in st.session_state.widget_cat["added_rows"]:
-                row["ID"] = str(uuid.uuid4())
-                sync_api({"action": "insert", "table": "Categorias", **row})
+    
+    if st.session_state.widget_cat["deleted_rows"]:
+        with st.spinner("Removendo..."):
             for idx in st.session_state.widget_cat["deleted_rows"]:
                 id_a = st.session_state.df_cat.iloc[idx]["ID"]
                 sync_api({"action": "delete", "table": "Categorias", "ID": id_a})
@@ -123,55 +142,53 @@ with st.sidebar:
 
     st.divider()
 
-    # Cartões
-
-    # 1. Preparação da lista de dias (1 a 31)
+    # --- SEÇÃO: CARTÕES ---
+    st.subheader("Cartões")
     lista_dias = list(range(1, 32))
 
-    st.subheader("Cartões")
+    # Formulário de Inclusão
+    with st.expander("🆕 Novo Cartão", expanded=False):
+        new_card = st.text_input("Nome do Cartão", key="input_new_card")
+        c_venc = st.selectbox("Vencimento (dia)", lista_dias, key="input_new_venc")
+        c_fech = st.selectbox("Fechamento (dia)", lista_dias, key="input_new_fech")
+        if st.button("Adicionar", key="btn_add_card", use_container_width=True):
+            if new_card:
+                payload = {
+                    "action": "insert", "table": "Cartoes", 
+                    "Cartao": new_card, "Vencimento": c_venc, 
+                    "Fechamento": c_fech, "ID": str(uuid.uuid4())
+                }
+                if sync_api(payload):
+                    st.toast("Cartão adicionado!")
+                    carregar_tudo()
+                    st.rerun()
+
+    # Tabela de Visualização e Exclusão (Bloqueada para edição)
     edit_card = st.data_editor(
         st.session_state.df_card,
         column_config={
             "ID": None, 
-            "Cartao": st.column_config.TextColumn("Nome", required=True), 
-            "Vencimento": st.column_config.SelectboxColumn(
-                "Venc (dia)", 
-                options=lista_dias, 
-                required=True
-            ), 
-            "Fechamento": st.column_config.SelectboxColumn(
-                "Fech (dia)", 
-                options=lista_dias, 
-                required=True
-            )
+            "Cartao": "Nome", 
+            "Vencimento": "Venc", 
+            "Fechamento": "Fech"
         },
         num_rows="dynamic", 
-        hide_index=True, 
+        hide_index=True,
+        disabled=["Cartao", "Vencimento", "Fechamento", "ID"], # Bloqueio cirúrgico de edição
         key="widget_card"
     )
 
-    # Lógica Atômica Cartões - Agora com Validação de Linha Completa
-    if st.session_state.widget_card["added_rows"] or st.session_state.widget_card["deleted_rows"]:
-        with st.spinner("Sincronizando Cartões..."):
-            
-            # Processar Adições: Só envia se a linha estiver completa
-            for row in st.session_state.widget_card["added_rows"]:
-                # Verifica se todos os campos necessários existem na linha atual
-                if all(k in row for k in ["Cartao", "Vencimento", "Fechamento"]):
-                    row["ID"] = str(uuid.uuid4())
-                    sync_api({"action": "insert", "table": "Cartoes", **row})
-            
-            # Processar Exclusões
+    if st.session_state.widget_card["deleted_rows"]:
+        with st.spinner("Removendo..."):
             for idx in st.session_state.widget_card["deleted_rows"]:
                 try:
                     id_a = str(st.session_state.df_card.iloc[idx]["ID"])
                     sync_api({"action": "delete", "table": "Cartoes", "ID": id_a})
                 except Exception as e:
                     st.error(f"Erro ao excluir: {e}")
-            
             carregar_tudo()
             st.rerun()
-
+            
 # =========================================================
 # 5. INTERFACE PRINCIPAL
 # =========================================================
