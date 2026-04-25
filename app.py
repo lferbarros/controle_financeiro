@@ -308,18 +308,35 @@ if not df_render.empty:
             carregar_tudo()
             st.rerun()
 
-    # 2. RESUMO SEMANAL (MOBILE FRIENDLY)
-    st.subheader("🗓️ Resumo 5 Semanas")
+    # 2. RESUMO SEMANAL COM SELETOR (MOBILE FRIENDLY)
+    st.subheader("🗓️ Resumo Semanal")
     df_s = get_resumo_semanal()
-    
-    for _, row in df_s.iterrows():
+
+    if not df_s.empty:
+        # Criamos uma coluna temporária de rótulos para o seletor (Ex: "27/04 a 03/05")
+        df_s['Label'] = df_s.apply(
+            lambda x: f"{x['Semana'].strftime('%d/%m')} a {(x['Semana'] + datetime.timedelta(days=6)).strftime('%d/%m')}", 
+            axis=1
+        )
+
+        # Seletor de Semana
+        semana_label = st.selectbox(
+            "Escolha a semana para análise:", 
+            options=df_s['Label'].tolist(),
+            label_visibility="collapsed" # Deixa o visual mais limpo no mobile
+        )
+
+        # Filtramos a linha correspondente à escolha
+        row = df_s[df_s['Label'] == semana_label].iloc[0]
+
+        # Exibição dos Cards de Métrica (Apenas a semana selecionada)
         with st.container():
-            fim = row['Semana'] + datetime.timedelta(days=6)
-            st.markdown(f"**Semana: {row['Semana'].strftime('%d/%m')} a {fim.strftime('%d/%m')}**")
             col1, col2, col3 = st.columns(3)
-            col1.metric("Entradas", f"R${row['+']:,.2f}")
-            col2.metric("Saídas", f"R${row['-']:,.2f}")
-            col3.metric("Saldo", f"R${row['Acum']:,.2f}", delta=f"{row['Var']:,.2f}")
+            col1.metric("Entradas", f"R$ {row['+']:,.2f}")
+            col2.metric("Saídas", f"R$ {row['-']:,.2f}")
+            # O delta mostra a variação (Var) em relação ao saldo acumulado (Acum)
+            col3.metric("Saldo", f"R$ {row['Acum']:,.2f}", delta=f"R$ {row['Var']:,.2f}")
+            
             st.markdown("---")
-else:
-    st.info("Nenhum lançamento encontrado.")
+    else:
+        st.info("Nenhuma projeção disponível para as próximas semanas.")
