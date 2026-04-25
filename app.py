@@ -124,33 +124,51 @@ with st.sidebar:
     st.divider()
 
     # Cartões
+
+    # 1. Preparação da lista de dias (1 a 31)
+    lista_dias = list(range(1, 32))
+
     st.subheader("Cartões")
     edit_card = st.data_editor(
         st.session_state.df_card,
-        column_config={"ID": None, "Cartao": "Nome", "Vencimento": "Venc (dia)", "Fechamento": "Fech (dia)"},
-        num_rows="dynamic", hide_index=True, key="widget_card"
+        column_config={
+            "ID": None, 
+            "Cartao": st.column_config.TextColumn("Nome", required=True), 
+            "Vencimento": st.column_config.SelectboxColumn(
+                "Venc (dia)", 
+                options=lista_dias, 
+                required=True
+            ), 
+            "Fechamento": st.column_config.SelectboxColumn(
+                "Fech (dia)", 
+                options=lista_dias, 
+                required=True
+            )
+        },
+        num_rows="dynamic", 
+        hide_index=True, 
+        key="widget_card"
     )
-  # Lógica Atômica Cartões (Versão Corrigida)
-    if st.session_state.widget_card["added_rows"] or st.session_state.widget_card["deleted_rows"] or st.session_state.widget_card["edited_rows"]:
-        with st.spinner("Sincronizando Cartões..."):
-            # 1. Processar Adições
-            for row in st.session_state.widget_card["added_rows"]:
-                row["ID"] = str(uuid.uuid4())
-                # Garante que o nome da coluna enviado seja 'Cartao' para o Apps Script
-                payload = {"action": "insert", "table": "Cartoes", **row}
-                sync_api(payload)
 
-            # 2. Processar Exclusões (O ponto crítico)
+    # Lógica Atômica Cartões - Agora com Validação de Linha Completa
+    if st.session_state.widget_card["added_rows"] or st.session_state.widget_card["deleted_rows"]:
+        with st.spinner("Sincronizando Cartões..."):
+            
+            # Processar Adições: Só envia se a linha estiver completa
+            for row in st.session_state.widget_card["added_rows"]:
+                # Verifica se todos os campos necessários existem na linha atual
+                if all(k in row for k in ["Cartao", "Vencimento", "Fechamento"]):
+                    row["ID"] = str(uuid.uuid4())
+                    sync_api({"action": "insert", "table": "Cartoes", **row})
+            
+            # Processar Exclusões
             for idx in st.session_state.widget_card["deleted_rows"]:
-                # Buscamos o ID de forma segura no DataFrame original usando o índice fornecido pelo widget
                 try:
                     id_a = str(st.session_state.df_card.iloc[idx]["ID"])
-                    if sync_api({"action": "delete", "table": "Cartoes", "ID": id_a}):
-                        st.toast(f"Cartão removido com sucesso!")
+                    sync_api({"action": "delete", "table": "Cartoes", "ID": id_a})
                 except Exception as e:
-                    st.error(f"Erro ao localizar ID para exclusão: {e}")
-
-            # 3. Finalização
+                    st.error(f"Erro ao excluir: {e}")
+            
             carregar_tudo()
             st.rerun()
 
