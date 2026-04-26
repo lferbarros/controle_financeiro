@@ -196,7 +196,7 @@ with st.sidebar:
             st.rerun()
             
             
-        # =========================================================
+# =========================================================
 # 6. PROCESSAMENTO DOS DADOS (TABELAS E RESUMOS)
 # =========================================================
 def get_df_render():
@@ -256,16 +256,14 @@ def assistente_virtual():
     
     st.subheader("🤖 Assistente de Fluxo")
     # ... resto do código (if st.session_state.chat_step == 0, etc.)
+    
     # Passo 0: Início
     if st.session_state.chat_step == 0:
-        st.chat_message("assistant").write("Olá! Vamos projetar um lançamento futuro? O que deseja fazer?")
-        c1, c2 = st.columns(2)
-        if c1.button("📝 Novo Lançamento", use_container_width=True):
+        st.chat_message("assistant").write("Olá! Vamos projetar um lançamento futuro?")
+        
+        # Removemos as colunas c1 e c2 e deixamos o botão direto
+        if st.button("📝 Novo Lançamento", use_container_width=True, type="primary"):
             st.session_state.chat_step = 1
-            st.rerun()
-        if c2.button("🧹 Limpar", use_container_width=True):
-            st.session_state.chat_step = 0
-            st.session_state.chat_data = {}
             st.rerun()
 
     # Passo 1: Valor
