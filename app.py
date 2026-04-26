@@ -244,7 +244,7 @@ def get_resumo_semanal():
     
 # Funcao assistente virtual
 
-    def assistente_virtual():
+def assistente_virtual():
     st.subheader("🤖 Assistente de Fluxo")
     
     # Passo 0: Início
