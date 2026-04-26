@@ -350,118 +350,47 @@ def assistente_virtual():
             st.session_state.chat_data = {}
             st.rerun()    
     
-# =========================================================
-# 5. INTERFACE PRINCIPAL
-# =========================================================
+    # --- TÍTULO PRINCIPAL ---
+st.title("💰 Gestor Financeiro")
 
-st.title("💰 Gestor Inteligente")
+# --- 1. ENTRADA DE DADOS (ASSISTENTE VIRTUAL) ---
+# Ela fica no topo para facilitar o registro rápido no dia a dia
+assistente_virtual()
 
-# Criando as abas para organizar o espaço
-tab_chat, tab_extrato = st.tabs(["🤖 Assistente Virtual", "📊 Extrato e Resumos"])
+st.divider() # Uma linha sutil para separar a entrada da visualização
 
-with tab_chat:
-    assistente_virtual()
-
-with tab_extrato:
-#Formulario lancamento manual
-    with st.expander("➕ Incluir Manualmente", expanded=False):
-        pass
-    c1, c2, c3, c4 = st.columns([2,2,2,1])
-    data_compra = c1.date_input("Data Compra", format="DD/MM/YYYY")
-    
-    lista_cat = st.session_state.df_cat["Categoria"].dropna().tolist()
-    cat_sel = c2.selectbox("Categoria", lista_cat if lista_cat else ["Nenhuma"])
-    
-    lista_card = ["Não"] + st.session_state.df_card["Cartao"].dropna().tolist()
-    card_sel = c3.selectbox("Cartão", lista_card)
-    
-    valor = c4.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
-
-    if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
-        if not lista_cat:
-            st.error("Cadastre uma categoria primeiro.")
-        else:
-            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_sel, "Tipo"].values[0]
-            dt_efetiva = calcular_vencimento(data_compra, card_sel)
-            payload = {
-                "action": "insert", "table": "Lancamentos", "ID": str(uuid.uuid4()),
-                "Data": data_compra.isoformat(), "Categoria": cat_sel, "Cartao": card_sel,
-                "Tipo": sinal, "Valor": float(valor), "Data_Efetiva": dt_efetiva.isoformat()
-            }
-            if sync_api(payload):
-                st.toast("Lançamento salvo!")
-                carregar_tudo()
-                st.rerun()
-    
-    # --- EXIBIÇÃO ---
-df_render = get_df_render()
-
-# Estilo Mobile
-st.markdown("""
-    <style>
-        [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
-        [data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
-        .stExpander { border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; margin-bottom: 10px; }
-        hr { margin: 10px 0 !important; }
-    </style>
-""", unsafe_allow_html=True)
-
-if not df_render.empty:
-    # 1. TABELA PRINCIPAL
-    with st.expander("📉 Extrato Projetado", expanded=True):
-        def color_negative(row):
-            return ['background-color: rgba(255, 75, 75, 0.1)' if row['Saldo_Acumulado'] < 0 else '' for _ in row]
-        
-        main_edit = st.data_editor(
-            df_render.style.apply(color_negative, axis=1),
-            column_config={
-                "ID": None, "Tipo": None,
-                "Data": st.column_config.DateColumn("Compra", format="DD/MM"),
-                "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YY"),
-                "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                "Saldo_Acumulado": st.column_config.NumberColumn("Saldo", format="R$ %.2f")
-            },
-            disabled=df_render.columns, num_rows="dynamic", hide_index=True, 
-            use_container_width=True, key="widget_main"
-        )
-        
-        if st.session_state.widget_main["deleted_rows"]:
-            for idx in st.session_state.widget_main["deleted_rows"]:
-                id_a = df_render.iloc[idx]["ID"]
-                sync_api({"action": "delete", "table": "Lancamentos", "ID": id_a})
-            carregar_tudo()
-            st.rerun()
-
-    # 2. RESUMO SEMANAL COM SELETOR (MOBILE FRIENDLY)
+# --- 2. RESUMO E INDICADORES ---
+# O resumo semanal com o seletor que criamos
+df_s = get_resumo_semanal()
+if not df_s.empty:
     st.subheader("🗓️ Resumo Semanal")
-    df_s = get_resumo_semanal()
+    df_s['Label'] = df_s.apply(
+        lambda x: f"{x['Semana'].strftime('%d/%m')} a {(x['Semana'] + datetime.timedelta(days=6)).strftime('%d/%m')}", 
+        axis=1
+    )
+    semana_label = st.selectbox("Escolha a semana:", options=df_s['Label'].tolist(), label_visibility="collapsed")
+    row_s = df_s[df_s['Label'] == semana_label].iloc[0]
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Entradas", f"R$ {row_s['+']:,.2f}")
+    col2.metric("Saídas", f"R$ {row_s['-']:,.2f}")
+    col3.metric("Saldo", f"R$ {row_s['Acum']:,.2f}", delta=f"R$ {row_s['Var']:,.2f}")
 
-    if not df_s.empty:
-        # Criamos uma coluna temporária de rótulos para o seletor (Ex: "27/04 a 03/05")
-        df_s['Label'] = df_s.apply(
-            lambda x: f"{x['Semana'].strftime('%d/%m')} a {(x['Semana'] + datetime.timedelta(days=6)).strftime('%d/%m')}", 
-            axis=1
+st.divider()
+
+# --- 3. DETALHAMENTO (EXTRATO PROJETADO) ---
+# A tabela detalhada para conferência profunda
+df_render = get_df_render()
+if not df_render.empty:
+    with st.expander("📉 Ver Extrato Detalhado", expanded=False):
+        st.data_editor(
+            df_render,
+            column_config={
+                "ID": None,
+                "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                "Data_Efetiva": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY")
+            },
+            hide_index=True,
+            disabled=True, # Mantendo sua regra de consistência
+            use_container_width=True
         )
-
-        # Seletor de Semana
-        semana_label = st.selectbox(
-            "Escolha a semana para análise:", 
-            options=df_s['Label'].tolist(),
-            label_visibility="collapsed" # Deixa o visual mais limpo no mobile
-        )
-
-        # Filtramos a linha correspondente à escolha
-        row = df_s[df_s['Label'] == semana_label].iloc[0]
-
-        # Exibição dos Cards de Métrica (Apenas a semana selecionada)
-        with st.container():
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Entradas", f"R$ {row['+']:,.2f}")
-            col2.metric("Saídas", f"R$ {row['-']:,.2f}")
-            # O delta mostra a variação (Var) em relação ao saldo acumulado (Acum)
-            col3.metric("Saldo", f"R$ {row['Acum']:,.2f}", delta=f"R$ {row['Var']:,.2f}")
-            
-            st.markdown("---")
-    else:
-        st.info("Nenhuma projeção disponível para as próximas semanas.")
-
