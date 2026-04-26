@@ -245,8 +245,17 @@ def get_resumo_semanal():
 # Funcao assistente virtual
 
 def assistente_virtual():
-    st.subheader("🤖 Assistente de Fluxo")
     
+# --- BOTÃO DE RESET FIXO NO TOPO ---
+    if st.session_state.chat_step > 0:
+        if st.button("⬅️ Reiniciar Assistente", use_container_width=False):
+            st.session_state.chat_step = 0
+            st.session_state.chat_data = {}
+            st.rerun()
+        st.divider()
+    
+    st.subheader("🤖 Assistente de Fluxo")
+    # ... resto do código (if st.session_state.chat_step == 0, etc.)
     # Passo 0: Início
     if st.session_state.chat_step == 0:
         st.chat_message("assistant").write("Olá! Vamos projetar um lançamento futuro? O que deseja fazer?")
