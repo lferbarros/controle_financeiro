@@ -357,7 +357,7 @@ with tab_chat:
 
 with tab_extrato:
 #Formulario lancamento manual
-    with st.expander("➕ Incluir Manualmente", expanded=False):
+with st.expander("➕ Incluir Manualmente", expanded=False):
 
     c1, c2, c3, c4 = st.columns([2,2,2,1])
     data_compra = c1.date_input("Data Compra", format="DD/MM/YYYY")
