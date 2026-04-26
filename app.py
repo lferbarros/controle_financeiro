@@ -10,9 +10,15 @@ st.set_page_config(page_title="Gestor Financeiro PRO", layout="wide", initial_si
 
 # =========================================================
 # 1. ACESSO E CONEXÃO
-# =========================================================
+# =========================================================# No bloco "if 'url_base' not in st.session_state:"
 if "url_base" not in st.session_state:
     st.session_state.url_base = ""
+
+# ADICIONE ESTAS LINHAS AQUI:
+if "chat_step" not in st.session_state:
+    st.session_state.chat_step = 0
+if "chat_data" not in st.session_state:
+    st.session_state.chat_data = {}
 
 def logout():
     st.session_state.clear()
@@ -189,41 +195,8 @@ with st.sidebar:
             carregar_tudo()
             st.rerun()
             
-# =========================================================
-# 5. INTERFACE PRINCIPAL
-# =========================================================
-st.title("💰 Fluxo de Caixa")
-
-# FORMULÁRIO DE LANÇAMENTO
-with st.expander("➕ Incluir Novo Lançamento", expanded=False):
-    c1, c2, c3, c4 = st.columns([2,2,2,1])
-    data_compra = c1.date_input("Data Compra", format="DD/MM/YYYY")
-    
-    lista_cat = st.session_state.df_cat["Categoria"].dropna().tolist()
-    cat_sel = c2.selectbox("Categoria", lista_cat if lista_cat else ["Nenhuma"])
-    
-    lista_card = ["Não"] + st.session_state.df_card["Cartao"].dropna().tolist()
-    card_sel = c3.selectbox("Cartão", lista_card)
-    
-    valor = c4.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
-
-    if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
-        if not lista_cat:
-            st.error("Cadastre uma categoria primeiro.")
-        else:
-            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_sel, "Tipo"].values[0]
-            dt_efetiva = calcular_vencimento(data_compra, card_sel)
-            payload = {
-                "action": "insert", "table": "Lancamentos", "ID": str(uuid.uuid4()),
-                "Data": data_compra.isoformat(), "Categoria": cat_sel, "Cartao": card_sel,
-                "Tipo": sinal, "Valor": float(valor), "Data_Efetiva": dt_efetiva.isoformat()
-            }
-            if sync_api(payload):
-                st.toast("Lançamento salvo!")
-                carregar_tudo()
-                st.rerun()
-
-# =========================================================
+            
+        # =========================================================
 # 6. PROCESSAMENTO DOS DADOS (TABELAS E RESUMOS)
 # =========================================================
 def get_df_render():
@@ -268,8 +241,152 @@ def get_resumo_semanal():
     resumo_final['Acum'] = resumo_final['Acum'].ffill().fillna(0)
     
     return resumo_final
+    
+# Funcao assistente virtual
 
-# --- EXIBIÇÃO ---
+    def assistente_virtual():
+    st.subheader("🤖 Assistente de Fluxo")
+    
+    # Passo 0: Início
+    if st.session_state.chat_step == 0:
+        st.chat_message("assistant").write("Olá! Vamos projetar um lançamento futuro? O que deseja fazer?")
+        c1, c2 = st.columns(2)
+        if c1.button("📝 Novo Lançamento", use_container_width=True):
+            st.session_state.chat_step = 1
+            st.rerun()
+        if c2.button("🧹 Limpar", use_container_width=True):
+            st.session_state.chat_step = 0
+            st.session_state.chat_data = {}
+            st.rerun()
+
+    # Passo 1: Valor
+    elif st.session_state.chat_step == 1:
+        st.chat_message("assistant").write("Qual o **valor** previsto?")
+        valor_chat = st.number_input("R$:", min_value=0.0, step=0.01, format="%.2f")
+        if st.button("Próximo ➡️", use_container_width=True):
+            st.session_state.chat_data["valor"] = valor_chat
+            st.session_state.chat_step = 2 # Vai para a data
+            st.rerun()
+
+    # Passo 2: Data da Ocorrência (NOVO)
+    elif st.session_state.chat_step == 2:
+        st.chat_message("assistant").write("Para **quando** está planejado este lançamento?")
+        # O calendário abre por padrão em hoje, mas permite escolher qualquer data futura
+        data_chat = st.date_input("Selecione a data:", datetime.date.today(), format="DD/MM/YYYY")
+        if st.button("Definir Data 📅", use_container_width=True):
+            st.session_state.chat_data["data"] = data_chat
+            st.session_state.chat_step = 3
+            st.rerun()
+
+    # Passo 3: Categoria
+    elif st.session_state.chat_step == 3:
+        st.chat_message("assistant").write("Qual a **categoria**?")
+        lista_cat = st.session_state.df_cat["Categoria"].tolist()
+        cat_chat = st.selectbox("Selecione:", [""] + lista_cat)
+        if cat_chat != "" and st.button("Confirmar Categoria", use_container_width=True):
+            st.session_state.chat_data["categoria"] = cat_chat
+            st.session_state.chat_step = 4
+            st.rerun()
+
+    # Passo 4: Cartão / Forma de Pagamento
+    elif st.session_state.chat_step == 4:
+        st.chat_message("assistant").write("Como será feito o **pagamento**?")
+        lista_card = ["Não"] + st.session_state.df_card["Cartao"].tolist()
+        card_chat = st.selectbox("Selecione o cartão (se houver):", lista_card)
+        if st.button("Definir Pagamento", use_container_width=True):
+            st.session_state.chat_data["cartao"] = card_chat
+            st.session_state.chat_step = 5
+            st.rerun()
+
+    # Passo 5: Confirmação e Salvamento
+    elif st.session_state.chat_step == 5:
+        resumo = st.session_state.chat_data
+        data_formatada = resumo['data'].strftime('%d/%m/%Y')
+        
+        st.chat_message("assistant").write(f"""
+            **Resumo do Lançamento Projetado:**
+            * 💰 **Valor:** R$ {resumo['valor']:.2f}
+            * 📅 **Data Prevista:** {data_formatada}
+            * 📂 **Categoria:** {resumo['categoria']}
+            * 💳 **Pagamento:** {resumo['cartao']}
+            
+            Posso confirmar o agendamento?
+        """)
+        
+        col_sim, col_nao = st.columns(2)
+        if col_sim.button("✅ Confirmar", use_container_width=True, type="primary"):
+            # Busca o sinal (+ ou -) da categoria
+            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == resumo['categoria'], "Tipo"].values[0]
+            
+            # CALCULA O VENCIMENTO: Se for cartão, joga para a data da fatura. Se não, mantém a data escolhida.
+            dt_efetiva = calcular_vencimento(resumo['data'], resumo['cartao'])
+            
+            payload = {
+                "action": "insert", "table": "Lancamentos", "ID": str(uuid.uuid4()),
+                "Data": resumo['data'].isoformat(), 
+                "Categoria": resumo['categoria'], 
+                "Cartao": resumo['cartao'], 
+                "Tipo": sinal, 
+                "Valor": float(resumo['valor']), 
+                "Data_Efetiva": dt_efetiva.isoformat()
+            }
+            
+            if sync_api(payload):
+                st.success("Lançamento agendado com sucesso!")
+                st.session_state.chat_step = 0
+                st.session_state.chat_data = {}
+                carregar_tudo()
+                st.rerun()
+        
+        if col_nao.button("❌ Cancelar", use_container_width=True):
+            st.session_state.chat_step = 0
+            st.session_state.chat_data = {}
+            st.rerun()    
+    
+# =========================================================
+# 5. INTERFACE PRINCIPAL
+# =========================================================
+
+st.title("💰 Gestor Inteligente")
+
+# Criando as abas para organizar o espaço
+tab_chat, tab_extrato = st.tabs(["🤖 Assistente Virtual", "📊 Extrato e Resumos"])
+
+with tab_chat:
+    assistente_virtual()
+
+with tab_extrato:
+#Formulario lancamento manual
+    with st.expander("➕ Incluir Manualmente", expanded=False):
+
+    c1, c2, c3, c4 = st.columns([2,2,2,1])
+    data_compra = c1.date_input("Data Compra", format="DD/MM/YYYY")
+    
+    lista_cat = st.session_state.df_cat["Categoria"].dropna().tolist()
+    cat_sel = c2.selectbox("Categoria", lista_cat if lista_cat else ["Nenhuma"])
+    
+    lista_card = ["Não"] + st.session_state.df_card["Cartao"].dropna().tolist()
+    card_sel = c3.selectbox("Cartão", lista_card)
+    
+    valor = c4.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
+
+    if st.button("Confirmar Lançamento", use_container_width=True, type="primary"):
+        if not lista_cat:
+            st.error("Cadastre uma categoria primeiro.")
+        else:
+            sinal = st.session_state.df_cat.loc[st.session_state.df_cat["Categoria"] == cat_sel, "Tipo"].values[0]
+            dt_efetiva = calcular_vencimento(data_compra, card_sel)
+            payload = {
+                "action": "insert", "table": "Lancamentos", "ID": str(uuid.uuid4()),
+                "Data": data_compra.isoformat(), "Categoria": cat_sel, "Cartao": card_sel,
+                "Tipo": sinal, "Valor": float(valor), "Data_Efetiva": dt_efetiva.isoformat()
+            }
+            if sync_api(payload):
+                st.toast("Lançamento salvo!")
+                carregar_tudo()
+                st.rerun()
+    
+    # --- EXIBIÇÃO ---
 df_render = get_df_render()
 
 # Estilo Mobile
@@ -340,3 +457,4 @@ if not df_render.empty:
             st.markdown("---")
     else:
         st.info("Nenhuma projeção disponível para as próximas semanas.")
+
